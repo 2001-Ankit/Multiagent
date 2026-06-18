@@ -11,5 +11,9 @@ wheels/
 
 
 .env
+credentials.json
+token.json
 
 /src/search_agent/*
+
+/src/delivery_agent/*

@@ -355,20 +355,18 @@ app = graph.compile()
 
 
 def run_agent(question: str):
-    return app.invoke(
-        {
-            "messages": [("user", question)],
-            "next_node": "",
-            "commander_routed": False,
-            "search_complete": False,
-            "email_sent": False,
-        },
-        config={"recursion_limit": 15},
+    initial_state = AgentState(
+        messages=[("user", question)],
+        next_node="",
+        commander_routed=False,
+        search_complete=False,
+        email_sent=False,
     )
+    return app.invoke(initial_state, config={"recursion_limit": 15})
 
 
 if __name__ == "__main__":
-    query = "Latest Information news and field in the field of AI"
+    query = "What is the current situation of US and Iran war as of 2026 june 18"
     result = run_agent(query)
     safe_print("\nFinal answer:")
     safe_print(result["messages"][-1].content)

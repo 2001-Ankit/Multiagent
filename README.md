@@ -1,5 +1,25 @@
 # Multi-agent workflow
 
+## Finance agent
+
+The workflow includes a finance agent for stocks, forex, crypto, investment
+research, financial benefits, and Nepal/NEPSE finance questions. It can give
+specific, fact-based opinions and suggestions while keeping clear that outputs
+are research, not personalized financial advice.
+
+Structured market data and historical stock records use Alpha Vantage when an
+API key is configured. Macro, political, inflation, interest-rate, currency, and
+geopolitical context uses web/news research so answers can include sourced
+real-world examples. Nepal-specific or missing market coverage falls back to
+web/news research.
+
+```env
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
+```
+
+Finance answers should be treated as research and education only, not
+personalized financial advice.
+
 ## Gmail delivery tool
 
 The delivery agent exposes a Gmail API based email tool at

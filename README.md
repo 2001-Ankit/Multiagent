@@ -1,5 +1,177 @@
 # Multi-agent workflow
 
+## Architecture
+
+A **CommanderAgent** acts as a planner/orchestrator. For each request it builds a
+short ordered plan, assigning each step to one specialist, then dispatches the
+steps, composes a single final answer, and hands it to the delivery agent.
+
+Specialists:
+
+- **search_agent** — general web/news/image/video/book research.
+- **finance_agent** — markets, investing, stocks, forex, crypto, macro, NEPSE.
+- **news_agent** — daily sectioned news briefing (finance, politics, sports with
+  live scores, world/top stories, or any topics you name).
+- **academic_agent** — US graduate study: matching professors/labs to a student's
+  research interest, plus admission requirements, deadlines, tests, and funding.
+- **job_finder_agent** — reads your resume, sources jobs (web + optional Indeed
+  MCP), checks eligibility, tailors your resume per role, drafts outreach, and
+  recommends where to apply with deadlines.
+- **market_opportunity_agent** — finds business/startup opportunities: trends,
+  market gaps, competitors, demand/funding signals, ranked with a validation step.
+- **learning_agent** — compares your resume to a target role, finds the skill gaps,
+  and builds a prioritized roadmap of free resources and portfolio projects.
+- **scholarship_agent** — scholarships/fellowships you're eligible for by
+  nationality/field/level, with eligibility, award, deadlines, and how to apply.
+- **travel_agent** — visa requirements for your passport, cost of living, flights,
+  and a step-by-step trip/relocation plan.
+- **content_agent** — drafts ready-to-post LinkedIn posts, X threads, and
+  newsletters in your voice, grounded in current facts and your background.
+- **price_watch_agent** — checks stock/crypto/currency/product prices against a
+  target and returns an ALERT/WATCH/NO-ACTION verdict (great with the `watch`
+  briefing + scheduler).
+
+Each plan step is logged with the specialist chosen and the reason, so you can see
+how the commander allocated resources.
+
+Adding a specialist is a one-entry change in `SPECIALIST_ROUTES` in
+`src/multi-agent_workflow.py` (prompt, tools, max tool rounds); the graph wires
+its node, tool node, and edges automatically.
+
+Run it:
+
+```powershell
+uv run python src/multi-agent_workflow.py
+```
+
+## From "I ask" to "it delivers" (proactive briefings)
+
+The system can build and **push** briefings to you on a schedule instead of waiting
+for you to ask. A briefing is a set of sections; each runs through the full agent
+workflow, and the results are combined into one message and delivered once.
+
+Built-in briefings: `daily` (news + markets watch + job matches), `news`, `jobs`.
+Edit the `BRIEFINGS` dict in `src/multi-agent_workflow.py` to change them.
+
+```powershell
+# Send a test message to confirm delivery works
+uv run python src/multi-agent_workflow.py --test-delivery --channel telegram
+
+# Build + deliver a briefing now
+uv run python src/multi-agent_workflow.py --briefing daily --channel telegram
+
+# One-off request (delivered), or add --no-deliver to just print it
+uv run python src/multi-agent_workflow.py --query "scholarships for Nepali students in CS"
+```
+
+### Schedule it (Windows Task Scheduler)
+
+Run the daily briefing every morning at 7:30am:
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute "uv" `
+  -Argument "run python src/multi-agent_workflow.py --briefing daily --channel telegram" `
+  -WorkingDirectory "e:\multi-agent"
+$trigger = New-ScheduledTaskTrigger -Daily -At 7:30am
+Register-ScheduledTask -TaskName "MultiAgentDailyBriefing" -Action $action -Trigger $trigger
+```
+
+On Linux/macOS the equivalent cron line is:
+
+```cron
+30 7 * * *  cd /path/to/multi-agent && uv run python src/multi-agent_workflow.py --briefing daily --channel telegram
+```
+
+## Telegram setup
+
+So briefings arrive as a chat message:
+
+1. In Telegram, message **@BotFather**, send `/newbot`, follow the prompts, and copy
+   the **bot token** it gives you.
+2. Send your new bot any message (e.g. "hi") so it can reply to you.
+3. Get your chat id: open
+   `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser and copy the
+   number in `"chat":{"id": ... }`.
+4. Put both in `.env` and set the default channel:
+
+   ```env
+   DELIVERY_CHANNEL=telegram
+   TELEGRAM_BOT_TOKEN=123456:ABC-your-token
+   TELEGRAM_CHAT_ID=123456789
+   ```
+
+5. Confirm: `uv run python src/multi-agent_workflow.py --test-delivery --channel telegram`
+   — you should get a test message. Long messages are auto-split into 4096-char parts.
+
+### Two-way Telegram bot (message it, it replies)
+
+Beyond scheduled pushes, you can chat *with* the bot — send it a question and it
+runs the agents and replies. It uses long polling (no public URL needed) and only
+responds to your `TELEGRAM_CHAT_ID`, so strangers can't use it.
+
+```powershell
+uv run python src/telegram_bot.py
+```
+
+Then in Telegram, message your bot:
+
+- Any question → routed to the right specialist and answered.
+- `/daily`, `/news`, `/jobs`, `/watch` → run that briefing.
+- `/help` → command list.
+
+Leave it running (or start it on login) to have an always-available assistant. It
+reuses the same delivery pipeline, so `DELIVERY_CHANNEL` can stay `telegram`.
+
+## Daily news agent
+
+Ask for a briefing (e.g. "give me today's news with finance, politics, sports")
+and the news agent fetches recent headlines per section and returns a skimmable
+digest, delivered through the delivery agent.
+
+## Academic agent (US universities)
+
+Ask about studying in the US (e.g. "find US professors working on graph neural
+networks for a PhD, and the programs/deadlines"). The agent finds matching
+professors/labs, explains the overlap with your interest, and lists admission
+requirements, deadlines, tests, and funding — all with source URLs.
+
+## Job finder agent
+
+Ask something like "find me remote Python jobs I'm eligible for and tailor my
+resume." The agent:
+
+1. Reads your resume (see below).
+2. Sources jobs across many boards with `search_jobs_web` (always on), and, if
+   configured, `search_jobs_indeed` via an MCP server for extra reach.
+3. Opens promising listings to read real requirements and deadlines.
+4. **Checks eligibility for your country** (`CANDIDATE_COUNTRY`, default Nepal) —
+   flags region-locked remote ("Remote, US only"), visa/work-authorization needs.
+5. Tailors your resume bullets to each role and drafts a human outreach message.
+6. Summarizes which companies to apply to first, with deadlines.
+
+### Resume
+
+Drop your resume into `data/resume/` **or** `src/resume/` as **PDF**, **TXT**, or
+**Markdown**, or set `RESUME_PATH` in `.env`. PDFs are parsed with `pdfplumber`.
+The newest supported file wins. Resume files are gitignored for privacy.
+
+### Indeed via MCP (optional)
+
+Web search works with no setup. For extra reach you can point the agent at a
+runnable Indeed MCP server (stdio or HTTP) in `.env`:
+
+```env
+# pick ONE transport
+INDEED_MCP_COMMAND=npx -y your-indeed-mcp-server
+# or
+INDEED_MCP_URL=https://your-indeed-mcp-host/mcp
+INDEED_MCP_TOKEN=your_token
+```
+
+Note: the claude.ai-hosted Indeed connector authenticates through claude.ai's OAuth
+and cannot be used by this standalone app; supply your own runnable MCP endpoint.
+If nothing is configured, the agent falls back to web search automatically.
+
 ## Finance agent
 
 The workflow includes a finance agent for stocks, forex, crypto, investment

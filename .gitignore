@@ -17,3 +17,8 @@ token.json
 /src/search_agent/*
 
 /src/delivery_agent/*
+
+# Private resume files (keep the folder + its README only)
+/data/resume/*
+!/data/resume/README.md
+/src/resume/

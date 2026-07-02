@@ -14,5 +14,6 @@ dependencies = [
     "langgraph",
     "mcp",
     "openai",
+    "pdfplumber",
     "python-dotenv",
 ]

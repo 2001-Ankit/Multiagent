@@ -22,3 +22,6 @@ token.json
 /data/resume/*
 !/data/resume/README.md
 /src/resume/
+
+# Private user profile (personal info given to the agents)
+/data/profile.md

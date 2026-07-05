@@ -226,6 +226,94 @@ llm = ChatOpenAI(...)
 delivery_llm = llm.bind_tools([send_email])
 ```
 
+## WhatsApp delivery (Cloud API)
+
+If Telegram is slow/blocked on your network (common in Nepal), WhatsApp's Cloud API
+is a fast alternative for **outbound** delivery.
+
+1. At [developers.facebook.com](https://developers.facebook.com) create an app →
+   add the **WhatsApp** product.
+2. Copy the temporary **access token** and **phone number ID** from the WhatsApp
+   setup page; add your own number as a verified recipient.
+3. Put them in `.env` and set the channel:
+
+   ```env
+   DELIVERY_CHANNEL=whatsapp
+   WHATSAPP_ACCESS_TOKEN=EAAG...
+   WHATSAPP_PHONE_NUMBER_ID=123456789012345
+   WHATSAPP_TO=9779800000000
+   ```
+
+4. Test: `uv run python src/multi-agent_workflow.py --test-delivery --channel whatsapp`
+
+Notes: free-form messages only reach you inside a 24-hour window after you message
+the business number (Meta policy); outside that you need an approved template.
+
+### Two-way WhatsApp bot (webhook + ngrok)
+
+WhatsApp has no polling — Meta pushes messages to a public URL. For a personal bot,
+run the webhook server locally and expose it with ngrok. Only `WHATSAPP_TO` is
+handled, so nobody else can drive your agents.
+
+1. Add to `.env`: `WHATSAPP_VERIFY_TOKEN=<any secret string>` (plus the WhatsApp
+   Cloud API vars above).
+2. Start the bot: `uv run python src/whatsapp_bot.py`
+3. In another terminal expose it: `ngrok http 8000` → copy the `https://...` URL.
+4. In the Meta app → **WhatsApp → Configuration → Edit** webhook:
+   - Callback URL: `https://<your-ngrok>.ngrok-free.app/webhook`
+   - Verify token: the same `WHATSAPP_VERIFY_TOKEN`
+   - Click **Verify and save**, then **Subscribe** to the `messages` field.
+5. Message your WhatsApp test number — the bot runs the agents and replies. Commands:
+   `/daily` `/news` `/jobs` `/watch` `/help`.
+
+Note: the free test setup only talks to numbers you pre-register (up to 5). A bot
+anyone can message needs a verified WhatsApp Business number.
+
+## Discord (recommended if Telegram is throttled / no WhatsApp business account)
+
+Discord is fast from most networks and needs no business verification. It gives you
+both **delivery** (via a channel webhook) and a **two-way bot** (message it, it
+replies).
+
+### Delivery (webhook, no bot needed)
+
+1. In your Discord server: **Channel settings → Integrations → Webhooks → New
+   Webhook → Copy URL**.
+2. Put it in `.env` and set the channel:
+
+   ```env
+   DELIVERY_CHANNEL=discord
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/....
+   ```
+
+3. Test: `uv run python src/multi-agent_workflow.py --test-delivery --channel discord`
+
+### Two-way bot
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+   → **New Application** → **Bot** → **Reset Token** and copy it.
+2. Under the bot settings, enable **Message Content Intent**.
+3. **OAuth2 → URL Generator**: scope `bot`, permissions *Send Messages* + *Read
+   Message History*. Open the generated URL to invite the bot to your server.
+4. In `.env`:
+
+   ```env
+   DISCORD_BOT_TOKEN=your_bot_token
+   DISCORD_ALLOWED_USER_ID=your_discord_user_id
+   ```
+
+   (Your user id: enable Developer Mode in Discord, right-click your name → Copy ID.)
+5. Run: `uv run python src/discord_bot.py` — then message the bot in your server.
+   Commands: `/daily` `/news` `/jobs` `/watch` `/help`.
+
+## Making the agents smarter
+
+- **User profile** — `data/profile.md` (or `USER_PROFILE` in `.env`) is injected into
+  every agent so answers stay personalized to you without re-explaining yourself.
+- **Model** — the single biggest lever. `GROQ_MODEL` defaults to a small 20B model;
+  switch to `openai/gpt-oss-120b` or `llama-3.3-70b-versatile` for noticeably better
+  reasoning and routing.
+
 ## Gmail MCP server
 
 The same Gmail send capability is also available as an MCP server:

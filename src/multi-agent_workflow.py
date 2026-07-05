@@ -27,6 +27,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.delivery_agent.email_tool import send_email  # noqa: E402
 from src.delivery_agent.formatting_tool import format_delivery_message  # noqa: E402
 from src.delivery_agent.telegram_tool import send_telegram_message  # noqa: E402
+from src.delivery_agent.discord_tool import send_discord_message  # noqa: E402
+from src.delivery_agent.whatsapp_tool import send_whatsapp_message  # noqa: E402
 from src.finance_agent.tools import (  # noqa: E402
     get_company_overview,
     get_crypto_rate,
@@ -193,7 +195,37 @@ PRICE_WATCH_TOOLS = [
 
 CANDIDATE_COUNTRY = os.environ.get("CANDIDATE_COUNTRY", "Nepal").strip() or "Nepal"
 
-MAX_COMMANDER_CONTEXT_CHARS = 5000
+
+def _load_user_profile() -> str:
+    """A persistent 'about me' the agents can personalize with, read once at start.
+
+    Priority: USER_PROFILE env -> data/profile.md. Empty string if neither exists.
+    """
+    env_profile = os.environ.get("USER_PROFILE", "").strip()
+    if env_profile:
+        return env_profile
+    profile_path = PROJECT_ROOT / "data" / "profile.md"
+    if profile_path.exists():
+        return profile_path.read_text(encoding="utf-8", errors="replace").strip()
+    return ""
+
+
+USER_PROFILE = _load_user_profile()
+
+
+def _profile_block() -> str:
+    if not USER_PROFILE:
+        return ""
+    return (
+        "\n\nAbout the user (personalize your answer to this; do not repeat it back "
+        f"verbatim):\n{USER_PROFILE}\n"
+    )
+
+
+def with_profile(prompt: str) -> str:
+    return prompt + _profile_block()
+
+MAX_COMMANDER_CONTEXT_CHARS = 9000
 MAX_TOOL_LIMIT_CHARS = 800
 MAX_PLAN_STEPS = 5
 DEFAULT_DELIVERY_CHANNEL = os.environ.get("DELIVERY_CHANNEL", "email").lower().strip()
@@ -252,6 +284,9 @@ If the user asks a broad "what's going on / news for today" question, also cover
 Top/World section for the biggest developing stories.
 
 Rules:
+- Call fetch_news_section once per section (finance, politics, sports). Do NOT call
+  the same section twice. That is 3 calls for a standard briefing, plus at most one
+  fetch_live_updates for active sports. Then write the digest.
 - Call fetch_news_section separately for each section so headlines stay grouped.
 - For sports, also call fetch_live_updates for major ongoing events (e.g. an active
   World Cup, finals, or tournaments) so you can report current scores, results, and
@@ -259,9 +294,14 @@ Rules:
 - Use fetch_live_updates for any fast-moving situation where the latest state
   (scores, casualties, decisions, counts) matters more than a dated headline.
 - Do not invent headlines, scores, or numbers; only use what the tools return.
-- After gathering everything, write a clean digest with one heading per section and
-  3-5 concise bullet headlines under each, each with a one-line takeaway and its
-  source URL. Put live scores/results at the top of the sports section.
+- After gathering everything, write a clean digest with one heading per section.
+- Under each section include AT LEAST 4-5 separate headlines (more if the tools
+  returned them). Never fewer than 4 per section unless the tool truly returned less.
+- Format every headline as three lines:
+    1) the headline text
+    2) a one-sentence description of what happened
+    3) the source URL on its own line (always include it; never drop the URL)
+- Put live scores/results at the top of the sports section.
 - Keep it skimmable. No markdown tables.
 """
 
@@ -465,7 +505,7 @@ SPECIALIST_ROUTES = {
     "news_agent": {
         "prompt": NEWS_PROMPT,
         "tools": NEWS_TOOLS,
-        "max_rounds": 4,
+        "max_rounds": 8,
         "description": (
             "a daily news briefing or digest organized into sections such as finance, "
             "politics, sports (including live scores/results), world/top stories, or "
@@ -563,7 +603,7 @@ Available specialists:
 {catalog}
 - direct: answer from general reasoning, no external research needed.
 
-Also decide the delivery channel: "email" or "telegram". Default to "{default_channel}"
+Also decide the delivery channel: "email", "telegram", or "whatsapp". Default to "{default_channel}"
 unless the user clearly asks for a specific channel.
 
 For every step include a short "reason" explaining why that specialist is the right
@@ -571,7 +611,7 @@ resource for the task.
 
 Return JSON only, no prose:
 {{"steps":[{{"agent":"<specialist>","task":"<clear task>","reason":"<why this specialist>"}}],
-"delivery_channel":"email" or "telegram"}}
+"delivery_channel":"email", "telegram", or "whatsapp"}}
 
 Keep the plan minimal ({max_steps} steps max). Choose specialists by meaning, not
 keywords."""
@@ -586,8 +626,10 @@ Guidelines:
   (Snapshot, Specific View, Suggested Action, Key Evidence, Risks, What To Watch,
   Sources) and make clear it is research, not personalized financial advice, and
   never guarantee outcomes.
-- If the results are a news briefing, keep clear section headings with concise
-  bullet headlines and source URLs.
+- If the results are a news briefing, PRESERVE it in full: keep every section
+  heading and keep at least 4-5 headlines per section, each with its one-line
+  description and its source URL. Do not drop, merge, or summarize away headlines
+  or URLs, and do not shorten sections to a few bullets.
 - Include useful source URLs and timestamps from the results.
 - Be clear and readable. Avoid markdown tables unless the user explicitly asked.
 - Do not mention internal routing, agents, or this instruction.
@@ -659,7 +701,7 @@ def commander_agent(state: AgentState):
 
         if agent == "direct":
             response = llm.invoke(
-                [SystemMessage(content=DIRECT_ANSWER_PROMPT), HumanMessage(content=task)]
+                [SystemMessage(content=with_profile(DIRECT_ANSWER_PROMPT)), HumanMessage(content=task)]
             )
             step_results.append(
                 {"agent": "direct", "task": task, "result": str(response.content)}
@@ -709,7 +751,7 @@ def build_plan(state: AgentState) -> tuple[list, str]:
 
     try:
         response = llm.invoke(
-            [SystemMessage(content=prompt), HumanMessage(content=user_question)]
+            [SystemMessage(content=with_profile(prompt)), HumanMessage(content=user_question)]
         )
         plan, channel = parse_plan(str(response.content))
         if plan:
@@ -728,7 +770,7 @@ def parse_plan(content: str) -> tuple[list, str]:
     parsed = json.loads(match.group(0))
     raw_steps = parsed.get("steps", [])
     channel = str(parsed.get("delivery_channel", DEFAULT_DELIVERY_CHANNEL)).lower().strip()
-    if channel not in {"email", "telegram"}:
+    if channel not in {"email", "telegram", "whatsapp", "discord"}:
         channel = DEFAULT_DELIVERY_CHANNEL
 
     valid_agents = set(SPECIALIST_ROUTES) | {"direct"}
@@ -903,8 +945,11 @@ def looks_like_live_research_request(question: str) -> bool:
 def compose_final_answer(state: AgentState, step_results: list) -> str:
     user_question = str(state["messages"][0].content)
 
-    # Single direct step: return it as-is, no extra synthesis pass needed.
-    if len(step_results) == 1 and step_results[0]["agent"] == "direct":
+    # Single step: return the specialist's own answer directly. It already wrote a
+    # complete, well-structured response per its prompt; a second summarization pass
+    # only loses detail (e.g. trims news headlines/URLs). The compose pass below is
+    # reserved for genuinely merging multiple specialists.
+    if len(step_results) == 1:
         return str(step_results[0]["result"])
 
     context_sections = []
@@ -916,7 +961,7 @@ def compose_final_answer(state: AgentState, step_results: list) -> str:
 
     response = llm.invoke(
         [
-            SystemMessage(content=COMMANDER_COMPOSE_PROMPT),
+            SystemMessage(content=with_profile(COMMANDER_COMPOSE_PROMPT)),
             HumanMessage(content=f"User request:\n{user_question}"),
             HumanMessage(content=f"Gathered specialist results:\n{gathered}"),
         ]
@@ -927,16 +972,32 @@ def compose_final_answer(state: AgentState, step_results: list) -> str:
 # --------------------------------------------------------------------------- #
 # Generic specialist node + tool node factory
 # --------------------------------------------------------------------------- #
-def make_specialist_node(name: str, system_prompt: str, tools: list, max_rounds: int):
+def make_specialist_node(
+    name: str,
+    system_prompt: str,
+    tools: list,
+    max_rounds: int,
+    finalizer=None,
+):
     bound_llm = llm.bind_tools(tools)
 
     def node(state: AgentState):
         work = state.get("work_messages", [])
         if count_tool_rounds(work) >= max_rounds:
-            response = AIMessage(content=build_tool_limit_answer(work, name))
+            # Research budget spent: force a final written answer from what was
+            # gathered (using the plain model so it cannot request more tools),
+            # instead of dumping raw tool output.
+            finalize_prompt = with_profile(system_prompt) + (
+                "\n\nYou have reached the research limit. Do NOT request any more "
+                "tools. Write the complete, well-structured final answer now using "
+                "only the information already gathered in the messages above."
+            )
+            response = llm.invoke([SystemMessage(content=finalize_prompt), *work])
+            if getattr(response, "tool_calls", None):
+                response = AIMessage(content=build_tool_limit_answer(work, name))
         else:
             response = bound_llm.invoke(
-                [SystemMessage(content=system_prompt), *work]
+                [SystemMessage(content=with_profile(system_prompt)), *work]
             )
 
         if getattr(response, "tool_calls", None):
@@ -944,6 +1005,12 @@ def make_specialist_node(name: str, system_prompt: str, tools: list, max_rounds:
             for tool_call in response.tool_calls:
                 safe_print(f"- {tool_call['name']} args={tool_call['args']}")
         else:
+            # Final answer for this step. If a deterministic finalizer is configured
+            # (e.g. news), use it so required detail/URLs are never trimmed.
+            if finalizer is not None:
+                built = finalizer(work)
+                if built:
+                    response = AIMessage(content=built)
             safe_print(f"\n[TRACE] {name} completed its task.")
 
         return {"work_messages": [response]}
@@ -990,16 +1057,42 @@ def delivery_agent(state: AgentState):
     original_question = str(state["messages"][0].content)
 
     delivered = deliver_message(original_question, final_answer, channel)
-    return {"delivered": delivered, "email_sent": delivered and channel != "telegram"}
+    return {"delivered": delivered, "email_sent": delivered and channel == "email"}
 
 
 def deliver_message(question: str, answer: str, channel: str | None = None) -> bool:
-    """Deliver a message through the given channel (email/telegram). Reusable by
-    the workflow node and by the scheduled briefing runner."""
+    """Deliver a message through the given channel (email/telegram/whatsapp).
+    Reusable by the workflow node and by the scheduled briefing runner."""
     channel = (channel or DEFAULT_DELIVERY_CHANNEL).lower().strip()
     if channel == "telegram":
         return deliver_telegram(question, answer)
+    if channel == "whatsapp":
+        return deliver_whatsapp(question, answer)
+    if channel == "discord":
+        return deliver_discord(question, answer)
     return deliver_email(question, answer)
+
+
+def deliver_discord(question: str, answer: str) -> bool:
+    _, body = format_for_channel(question, answer, "chat")
+    try:
+        result = send_discord_message.invoke({"text": body})
+        safe_print(f"\n[TRACE] DeliveryAgent (discord): {result}")
+        return True
+    except Exception as exc:
+        safe_print(f"\n[TRACE] DeliveryAgent failed to send Discord message: {exc}")
+        return False
+
+
+def deliver_whatsapp(question: str, answer: str) -> bool:
+    _, body = format_for_channel(question, answer, "whatsapp")
+    try:
+        result = send_whatsapp_message.invoke({"text": body})
+        safe_print(f"\n[TRACE] DeliveryAgent (whatsapp): {result}")
+        return True
+    except Exception as exc:
+        safe_print(f"\n[TRACE] DeliveryAgent failed to send WhatsApp message: {exc}")
+        return False
 
 
 def deliver_email(question: str, answer: str) -> bool:
@@ -1085,6 +1178,101 @@ def build_tool_limit_answer(messages: list[BaseMessage], agent_name: str) -> str
     return "\n".join(sections)
 
 
+_NEWS_FIELD_LABELS = ("date", "title", "body", "description", "source", "url")
+_NEWS_ITEM_START = re.compile(r"^(?:(?:web|news)\s+)?\d+\.\s*(.*)$", re.IGNORECASE)
+
+
+def _absorb_news_field(item: dict, text: str) -> None:
+    for label in _NEWS_FIELD_LABELS:
+        prefix = f"{label}:"
+        if text.lower().startswith(prefix):
+            item[label] = text[len(prefix):].strip()
+            return
+
+
+def _parse_news_block(block: str) -> tuple[str, list[dict]]:
+    lines = block.splitlines()
+    section = "News"
+    if lines:
+        head = lines[0].strip()
+        if head.lower().startswith("section:"):
+            section = head.split(":", 1)[1].strip()
+        elif head.lower().startswith("live updates:"):
+            section = head.split(":", 1)[1].strip() + " (live)"
+
+    items: list[dict] = []
+    current: dict = {}
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _NEWS_ITEM_START.match(stripped)
+        if match:
+            if current:
+                items.append(current)
+            current = {}
+            _absorb_news_field(current, match.group(1))
+        else:
+            _absorb_news_field(current, stripped)
+    if current:
+        items.append(current)
+    return section, items
+
+
+def build_news_digest(messages: list[BaseMessage], per_section: int = 5) -> str:
+    """Deterministically format a news digest from the gathered tool results.
+
+    Guarantees up to `per_section` headlines per section, each with a one-line
+    description and its URL, without relying on the model to include them (and
+    without spending tokens on a compose pass).
+    """
+    tool_messages = [m for m in messages if getattr(m, "type", None) == "tool"]
+    if not tool_messages:
+        return ""
+
+    ordered_sections: list[str] = []
+    grouped: dict[str, list[dict]] = {}
+    for message in tool_messages:
+        section, items = _parse_news_block(str(message.content))
+        if section not in grouped:
+            grouped[section] = []
+            ordered_sections.append(section)
+        grouped[section].extend(items)
+
+    out: list[str] = []
+    for section in ordered_sections:
+        rendered = []
+        seen: set[str] = set()
+        for item in grouped[section]:
+            title = item.get("title", "").strip()
+            url = item.get("url", "").strip()
+            if not title:
+                continue
+            key = url or title
+            if key in seen:
+                continue
+            seen.add(key)
+            desc = (item.get("body") or item.get("description") or "").strip()
+            block = [f"- {title}"]
+            if desc:
+                block.append(f"  {desc}")
+            if url:
+                block.append(f"  {url}")
+            rendered.append("\n".join(block))
+            if len(rendered) >= per_section:
+                break
+        if rendered:
+            out.append(f"**{section}**")
+            out.append("\n".join(rendered))
+            out.append("")
+
+    return "\n".join(out).strip()
+
+
+# News uses a deterministic finalizer so every section keeps its headlines + URLs.
+SPECIALIST_ROUTES["news_agent"]["finalizer"] = build_news_digest
+
+
 def _truncate_for_context(text: str, max_chars: int = MAX_COMMANDER_CONTEXT_CHARS) -> str:
     if len(text) <= max_chars:
         return text
@@ -1108,7 +1296,13 @@ def build_graph():
         tools_node_name = f"{name}_tools"
         graph.add_node(
             name,
-            make_specialist_node(name, cfg["prompt"], cfg["tools"], cfg["max_rounds"]),
+            make_specialist_node(
+                name,
+                cfg["prompt"],
+                cfg["tools"],
+                cfg["max_rounds"],
+                finalizer=cfg.get("finalizer"),
+            ),
         )
         graph.add_node(tools_node_name, make_traced_tool_node(name, cfg["tools"]))
         graph.add_conditional_edges(
@@ -1223,31 +1417,40 @@ BRIEFINGS = {
 }
 
 
-def run_briefing(name: str, channel: str | None = None) -> bool:
+def build_briefing(name: str) -> str | None:
+    """Build a briefing's combined text without delivering it. Returns None if the
+    briefing name is unknown. Reusable by any channel (CLI, Discord bot, etc.)."""
     briefing = BRIEFINGS.get(name)
     if not briefing:
-        available = ", ".join(sorted(BRIEFINGS))
-        safe_print(f"Unknown briefing '{name}'. Available: {available}")
-        return False
+        return None
 
-    channel = channel or DEFAULT_DELIVERY_CHANNEL
     today = datetime.now().strftime("%A, %d %B %Y")
-    safe_print(f"\n[BRIEFING] Building '{name}' for {today} (channel: {channel})")
+    safe_print(f"\n[BRIEFING] Building '{name}' for {today}")
 
     parts = [f"{briefing['title']} - {today}", ""]
     for label, prompt in briefing["sections"]:
         safe_print(f"\n[BRIEFING] Section: {label}")
         try:
-            answer = answer_only(prompt, channel=channel)
+            answer = answer_only(prompt)
         except Exception as exc:
             answer = f"(Could not build this section: {exc})"
         parts.append(f"=== {label} ===")
         parts.append(answer.strip())
         parts.append("")
 
-    combined = "\n".join(parts).strip()
-    delivered = deliver_message(briefing["title"], combined, channel)
-    safe_print(f"\n[BRIEFING] Delivered: {delivered}")
+    return "\n".join(parts).strip()
+
+
+def run_briefing(name: str, channel: str | None = None) -> bool:
+    text = build_briefing(name)
+    if text is None:
+        available = ", ".join(sorted(BRIEFINGS))
+        safe_print(f"Unknown briefing '{name}'. Available: {available}")
+        return False
+
+    channel = channel or DEFAULT_DELIVERY_CHANNEL
+    delivered = deliver_message(BRIEFINGS[name]["title"], text, channel)
+    safe_print(f"\n[BRIEFING] Delivered via {channel}: {delivered}")
     return delivered
 
 

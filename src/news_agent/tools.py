@@ -20,7 +20,7 @@ SECTION_HINTS = {
 
 
 @tool
-def fetch_news_section(topic: str, region: str = "us-en", max_results: int = 5) -> str:
+def fetch_news_section(topic: str, region: str = "us-en", max_results: int = 6) -> str:
     """Fetch recent news headlines for a single section/topic (e.g. finance, politics, sports).
 
     Returns dated headlines with a short summary, source, and URL so the agent can
@@ -29,7 +29,7 @@ def fetch_news_section(topic: str, region: str = "us-en", max_results: int = 5) 
     normalized = topic.strip().lower()
     hint = SECTION_HINTS.get(normalized, topic.strip())
     query = f"{topic.strip()} {hint} latest news".strip()
-    safe_results = max(3, min(int(max_results), 8))
+    safe_results = max(5, min(int(max_results), 10))
 
     try:
         results = DDGS().news(

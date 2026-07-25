@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Callable
@@ -30,9 +31,13 @@ from src.delivery_agent.telegram_tool import send_telegram_message  # noqa: E402
 from src.delivery_agent.discord_tool import send_discord_message  # noqa: E402
 from src.delivery_agent.whatsapp_tool import send_whatsapp_message  # noqa: E402
 from src.finance_agent.tools import (  # noqa: E402
+    get_analyst_view,
+    get_commodity_price,
     get_company_overview,
     get_crypto_rate,
+    get_financials,
     get_forex_rate,
+    get_market_snapshot,
     get_stock_history,
     get_stock_quote,
     search_finance_news,
@@ -44,6 +49,10 @@ from src.academic_agent.tools import (  # noqa: E402
     find_us_professors,
     find_us_programs,
     get_professor_recent_work,
+)
+from src.ghostwriter_agent.tools import (  # noqa: E402
+    find_keywords_and_questions,
+    research_for_content,
 )
 from src.job_finder_agent.tools import (  # noqa: E402
     get_my_resume,
@@ -77,6 +86,7 @@ from src.travel_agent.tools import (  # noqa: E402
     research_flights,
     research_visa_requirements,
 )
+from src.vision_agent.tools import analyze_chart, describe_image  # noqa: E402
 from src.search_agent.tools import (  # noqa: E402
     extract_url_content,
     search_books,
@@ -117,11 +127,15 @@ SEARCH_TOOLS = [
 ]
 
 FINANCE_TOOLS = [
+    get_market_snapshot,
     get_stock_quote,
     get_company_overview,
     get_stock_history,
+    get_financials,
+    get_analyst_view,
     get_forex_rate,
     get_crypto_rate,
+    get_commodity_price,
     search_finance_news,
     search_macro_finance_context,
     search_nepal_finance,
@@ -191,6 +205,19 @@ PRICE_WATCH_TOOLS = [
     get_crypto_rate,
     get_forex_rate,
     search_product_price,
+]
+
+VISION_TOOLS = [
+    analyze_chart,
+    describe_image,
+]
+
+GHOSTWRITER_TOOLS = [
+    research_for_content,
+    find_keywords_and_questions,
+    extract_url_content,
+    get_my_resume,
+    search_information,
 ]
 
 CANDIDATE_COUNTRY = os.environ.get("CANDIDATE_COUNTRY", "Nepal").strip() or "Nepal"
@@ -268,6 +295,12 @@ Rules:
   risks, and what to watch.
 - Be explicit about uncertainty and what would change the view.
 - For Nepal or NEPSE requests, use search_nepal_finance.
+- Start with get_market_snapshot for macro awareness (indices, gold, oil, the
+  dollar, 10Y yield, VIX, Bitcoin) so you read the current world scenario - risk-on
+  vs risk-off, rates, inflation pressure, dollar strength - before drilling in.
+- Use get_commodity_price for commodity-driven effects (oil/gold/copper/gas/grains)
+  and trace how they ripple from global macro down to sectors and niche markets.
+- Use get_financials and get_analyst_view for company depth when relevant.
 
 After gathering enough evidence, provide a concise research memo with a specific
 view rather than a vague answer.
@@ -482,6 +515,45 @@ For each item the user names:
 Be concise and factual. Do not invent prices; if a lookup fails, say so.
 """
 
+GHOSTWRITER_PROMPT = f"""You are GhostwriterAgent. You write publish-ready long-form
+content in the user's voice: newsletters, blog posts/articles, LinkedIn posts, and
+X/Twitter threads.
+
+The user is based in {CANDIDATE_COUNTRY}.
+
+Detect the format the user asked for (newsletter, blog, article, LinkedIn post, or
+thread). If unspecified, ask yourself what best fits and pick one, stating which.
+
+Workflow:
+- Use research_for_content to ground the piece in real, current facts + sources.
+- Use find_keywords_and_questions for blogs/newsletters to shape SEO headlines and
+  answer real audience questions.
+- Use get_my_resume only if the piece is about the user's own experience/brand.
+- Use extract_url_content to pull detail from a specific source.
+
+Output the FINISHED, ready-to-publish piece (not an outline), with:
+- A strong hook/headline and skimmable structure (subheads, short paragraphs).
+- Concrete, specific value; teach or inform - no fluff or filler.
+- For blogs/newsletters: a title, the body, and a short meta description; weave in
+  keywords naturally.
+- For LinkedIn/threads: platform-native formatting and a light call to action.
+- A "Sources" list of the URLs used.
+Do not fabricate facts, quotes, or statistics; only use what the tools returned.
+Keep it human and specific, never generic AI filler. No markdown tables.
+"""
+
+VISION_PROMPT = """You are VisionAgent. You analyze images the user provides (as a
+file path or URL in the request).
+
+- If the image is a market price chart (stock, ETF, index, crypto, forex, commodity),
+  use analyze_chart to read trend, support/resistance, patterns, momentum, and give an
+  evidence-based technical read (not financial advice, no guarantees).
+- Otherwise use describe_image to describe it and extract any visible text.
+
+Pass the exact image path/URL from the request to the tool. Report the tool's
+findings clearly. Do not claim to see anything the tool did not report.
+"""
+
 SPECIALIST_ROUTES = {
     "search_agent": {
         "prompt": SEARCH_PROMPT,
@@ -495,7 +567,7 @@ SPECIALIST_ROUTES = {
     "finance_agent": {
         "prompt": FINANCE_PROMPT,
         "tools": FINANCE_TOOLS,
-        "max_rounds": 5,
+        "max_rounds": 8,
         "description": (
             "financial markets, investing, trading, stocks, companies, sectors, forex, "
             "currencies, crypto, commodities, macro/interest-rate questions, portfolio "
@@ -563,6 +635,16 @@ SPECIALIST_ROUTES = {
             "to apply"
         ),
     },
+    "vision_agent": {
+        "prompt": VISION_PROMPT,
+        "tools": VISION_TOOLS,
+        "max_rounds": 3,
+        "description": (
+            "analyzing an image provided as a path or URL: reading market price charts "
+            "(stocks, crypto, forex, indices) for a technical view, or describing/"
+            "extracting text from any other image or screenshot"
+        ),
+    },
     "travel_agent": {
         "prompt": TRAVEL_PROMPT,
         "tools": TRAVEL_TOOLS,
@@ -578,9 +660,17 @@ SPECIALIST_ROUTES = {
         "tools": CONTENT_TOOLS,
         "max_rounds": 5,
         "description": (
-            "drafting ready-to-post social/written content: LinkedIn posts, X/Twitter "
-            "threads, newsletters, and captions, grounded in current facts and the "
-            "user's own background"
+            "short-form social content: a single LinkedIn post, an X/Twitter thread, "
+            "or a caption, grounded in current facts and the user's background"
+        ),
+    },
+    "ghostwriter_agent": {
+        "prompt": GHOSTWRITER_PROMPT,
+        "tools": GHOSTWRITER_TOOLS,
+        "max_rounds": 6,
+        "description": (
+            "publish-ready long-form writing: newsletters, blog posts/articles, and "
+            "longer pieces, researched and grounded with sources (ghostwriting)"
         ),
     },
     "price_watch_agent": {
@@ -648,12 +738,93 @@ def safe_print(text: str) -> None:
     print(text.encode(encoding, errors="replace").decode(encoding))
 
 
+# The "brain" is any OpenAI-compatible endpoint. Defaults to Groq; set LLM_* in .env
+# to point at NVIDIA (e.g. moonshotai/kimi-k2.6) or another provider without code
+# changes. GROQ_* are kept as fallbacks for backward compatibility.
+# Default to llama-3.3-70b-versatile: reliable tool-calling on Groq (the gpt-oss
+# models intermittently emit malformed/misplaced tool calls that Groq rejects).
+LLM_MODEL = (
+    os.environ.get("LLM_MODEL")
+    or os.environ.get("GROQ_MODEL")
+    or "llama-3.3-70b-versatile"
+)
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+LLM_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY")
+
 llm = ChatOpenAI(
-    model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"),
-    api_key=os.environ.get("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1",
+    model=LLM_MODEL,
+    api_key=LLM_API_KEY,
+    base_url=LLM_BASE_URL,
     temperature=0,
 )
+
+
+def _provider_name(base_url: str) -> str:
+    if "groq" in base_url:
+        return "Groq"
+    if "nvidia" in base_url:
+        return "NVIDIA"
+    if "openai" in base_url:
+        return "OpenAI"
+    return base_url
+
+
+def active_model_info() -> str:
+    """One-line description of the active brain LLM, for logs and bot commands."""
+    return f"{LLM_MODEL} via {_provider_name(LLM_BASE_URL)}"
+
+
+# Log the active model once at startup so it's always visible in the console/bot logs.
+safe_print(f"[CONFIG] Brain LLM: {active_model_info()}  (base_url={LLM_BASE_URL})")
+
+
+def robust_invoke(runnable, messages, retries: int = 5, base_delay: float = 3.0):
+    """Invoke an LLM/runnable with retry + backoff on transient provider errors.
+
+    Retries on rate limits (HTTP 429) and on Groq's intermittent tool-call parse
+    failures (``output_parse_failed`` / "could not be parsed"), which small models
+    like gpt-oss emit sporadically. Honors the "try again in Xs" hint when present.
+    """
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return runnable.invoke(messages)
+        except Exception as exc:  # noqa: BLE001 - want to inspect message text
+            last_error = exc
+            text = str(exc).lower()
+            is_rate_limit = (
+                "429" in text or "rate limit" in text or "rate_limit" in text
+            )
+            is_parse_fail = (
+                "output_parse_failed" in text
+                or "could not be parsed" in text
+                or "failed_generation" in text
+                or "tool_use_failed" in text
+                or "tool choice is none" in text
+            )
+            if (not is_rate_limit and not is_parse_fail) or attempt == retries - 1:
+                raise
+
+            if is_rate_limit:
+                delay = base_delay * (attempt + 1)
+                hint = re.search(r"try again in ([0-9.]+)\s*s", str(exc))
+                if hint:
+                    delay = float(hint.group(1)) + 0.5
+                safe_print(
+                    f"[retry] rate limited; waiting {min(delay, 30):.1f}s "
+                    f"(attempt {attempt + 1}/{retries})"
+                )
+                time.sleep(min(delay, 30))
+            else:
+                # Parse failure is usually transient; retry quickly.
+                safe_print(
+                    f"[retry] model output parse failed; retrying "
+                    f"(attempt {attempt + 1}/{retries})"
+                )
+                time.sleep(1.0)
+    if last_error:
+        raise last_error
+    raise RuntimeError("robust_invoke failed without an exception")
 
 
 # --------------------------------------------------------------------------- #
@@ -670,7 +841,8 @@ def commander_agent(state: AgentState):
         plan, channel = build_plan(state)
         step_index = 0
         step_results = []
-        safe_print("\n[TRACE] Commander selected resources for this request:")
+        safe_print(f"\n[TRACE] Brain model: {active_model_info()}")
+        safe_print("[TRACE] Commander selected resources for this request:")
         for i, step in enumerate(plan, start=1):
             safe_print(f"  {i}. {step['agent']}")
             safe_print(f"     task:   {step['task']}")
@@ -700,8 +872,9 @@ def commander_agent(state: AgentState):
         task = step["task"]
 
         if agent == "direct":
-            response = llm.invoke(
-                [SystemMessage(content=with_profile(DIRECT_ANSWER_PROMPT)), HumanMessage(content=task)]
+            response = robust_invoke(
+                llm,
+                [SystemMessage(content=with_profile(DIRECT_ANSWER_PROMPT)), HumanMessage(content=task)],
             )
             step_results.append(
                 {"agent": "direct", "task": task, "result": str(response.content)}
@@ -750,8 +923,9 @@ def build_plan(state: AgentState) -> tuple[list, str]:
     )
 
     try:
-        response = llm.invoke(
-            [SystemMessage(content=with_profile(prompt)), HumanMessage(content=user_question)]
+        response = robust_invoke(
+            llm,
+            [SystemMessage(content=with_profile(prompt)), HumanMessage(content=user_question)],
         )
         plan, channel = parse_plan(str(response.content))
         if plan:
@@ -863,12 +1037,22 @@ def fallback_plan(user_question: str) -> list:
         "cost of living",
         "embassy",
     )
+    ghostwriter_terms = (
+        "newsletter",
+        "blog",
+        "article",
+        "ghostwrite",
+        "ghost write",
+        "write a piece",
+        "long form",
+        "long-form",
+        "essay",
+    )
     content_terms = (
         "linkedin post",
         "tweet",
         "twitter",
         "x thread",
-        "newsletter",
         "caption",
         "write a post",
         "draft a post",
@@ -883,12 +1067,15 @@ def fallback_plan(user_question: str) -> list:
         "goes above",
         "target price",
     )
-    if any(term in lowered for term in news_terms):
+    # Writing intent ("write a newsletter/blog/post") wins over the topic keyword.
+    if any(term in lowered for term in ghostwriter_terms):
+        agent = "ghostwriter_agent"
+    elif any(term in lowered for term in content_terms):
+        agent = "content_agent"
+    elif any(term in lowered for term in news_terms):
         agent = "news_agent"
     elif any(term in lowered for term in scholarship_terms):
         agent = "scholarship_agent"
-    elif any(term in lowered for term in content_terms):
-        agent = "content_agent"
     elif any(term in lowered for term in price_terms):
         agent = "price_watch_agent"
     elif any(term in lowered for term in travel_terms):
@@ -959,12 +1146,13 @@ def compose_final_answer(state: AgentState, step_results: list) -> str:
         )
     gathered = _truncate_for_context("\n\n".join(context_sections))
 
-    response = llm.invoke(
+    response = robust_invoke(
+        llm,
         [
             SystemMessage(content=with_profile(COMMANDER_COMPOSE_PROMPT)),
             HumanMessage(content=f"User request:\n{user_question}"),
             HumanMessage(content=f"Gathered specialist results:\n{gathered}"),
-        ]
+        ],
     )
     return str(response.content)
 
@@ -992,12 +1180,19 @@ def make_specialist_node(
                 "tools. Write the complete, well-structured final answer now using "
                 "only the information already gathered in the messages above."
             )
-            response = llm.invoke([SystemMessage(content=finalize_prompt), *work])
-            if getattr(response, "tool_calls", None):
+            try:
+                response = robust_invoke(llm, [SystemMessage(content=finalize_prompt), *work])
+                if getattr(response, "tool_calls", None):
+                    response = AIMessage(content=build_tool_limit_answer(work, name))
+            except Exception as exc:
+                # Never crash the whole request if the finalize call misbehaves;
+                # fall back to a plain summary of what was gathered.
+                safe_print(f"\n[TRACE] {name} finalize fell back: {exc}")
                 response = AIMessage(content=build_tool_limit_answer(work, name))
         else:
-            response = bound_llm.invoke(
-                [SystemMessage(content=with_profile(system_prompt)), *work]
+            response = robust_invoke(
+                bound_llm,
+                [SystemMessage(content=with_profile(system_prompt)), *work],
             )
 
         if getattr(response, "tool_calls", None):
@@ -1349,6 +1544,32 @@ def answer_only(question: str, channel: str | None = None) -> str:
     """
     result = run_agent(question, deliver=False, channel=channel)
     return str(result["messages"][-1].content)
+
+
+def analyze_image_message(image_url: str, caption: str = "") -> str:
+    """Analyze an image (path or URL) directly via the vision tools.
+
+    Called by chat bots when a message includes an image attachment. Picks chart
+    analysis when the caption hints at a market chart, otherwise general vision.
+    """
+    lowered = (caption or "").lower()
+    chart_terms = (
+        "chart",
+        "stock",
+        "stocks",
+        "crypto",
+        "trading",
+        "candle",
+        "price",
+        "ticker",
+        "forex",
+        "nepse",
+        "support",
+        "resistance",
+    )
+    if any(term in lowered for term in chart_terms):
+        return str(analyze_chart.invoke({"image_source": image_url, "question": caption}))
+    return str(describe_image.invoke({"image_source": image_url, "question": caption}))
 
 
 # --------------------------------------------------------------------------- #

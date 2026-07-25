@@ -179,15 +179,16 @@ research, financial benefits, and Nepal/NEPSE finance questions. It can give
 specific, fact-based opinions and suggestions while keeping clear that outputs
 are research, not personalized financial advice.
 
-Structured market data and historical stock records use Alpha Vantage when an
-API key is configured. Macro, political, inflation, interest-rate, currency, and
-geopolitical context uses web/news research so answers can include sourced
-real-world examples. Nepal-specific or missing market coverage falls back to
-web/news research.
+Structured market data uses **Yahoo Finance (`yfinance`) - no API key required**.
+Covered: live quotes, company fundamentals/overview, daily history with
+trend/volume signals, financials, analyst view, forex, crypto, **commodities**
+(gold, oil, copper, gas, grains...), and a one-glance **global market snapshot**
+(indices, gold, oil, the dollar, 10Y yield, VIX, Bitcoin) for macro awareness.
 
-```env
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
-```
+Macro, political, inflation, interest-rate, currency, and geopolitical context uses
+web/news research. Nepal-specific coverage uses `search_nepal_finance`.
+
+No finance API key is needed anymore (Alpha Vantage has been removed).
 
 Finance answers should be treated as research and education only, not
 personalized financial advice.

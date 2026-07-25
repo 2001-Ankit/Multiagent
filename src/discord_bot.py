@@ -45,7 +45,7 @@ BRIEFING_COMMANDS = {"/daily": "daily", "/news": "news", "/jobs": "jobs", "/watc
 HELP_TEXT = (
     "I'm your multi-agent assistant. Send a question and I'll route it to the right "
     "specialist.\n\n"
-    "**Commands:** /daily /news /jobs /watch /help\n"
+    "**Commands:** /daily /news /jobs /watch /model /help\n"
     "**Examples:** `scholarships for Nepali students in CS` | "
     "`visa requirements for Germany` | `write a LinkedIn post about my project`"
 )
@@ -93,6 +93,27 @@ async def on_message(message: discord.Message):
         return
 
     text = (message.content or "").strip()
+
+    # Image attachment (e.g. a chart screenshot) -> analyze it with the vision model.
+    image = next(
+        (
+            a
+            for a in message.attachments
+            if (a.content_type or "").startswith("image")
+            or a.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif"))
+        ),
+        None,
+    )
+    if image is not None:
+        await message.channel.send("Looking at your image...")
+        try:
+            result = await asyncio.to_thread(mw.analyze_image_message, image.url, text)
+        except Exception as exc:
+            await message.channel.send(f"Sorry, could not analyze the image: {exc}")
+            return
+        await send_long(message.channel, result)
+        return
+
     if not text:
         return
 
@@ -100,6 +121,10 @@ async def on_message(message: discord.Message):
 
     if command in {"/start", "/help"}:
         await message.channel.send(HELP_TEXT)
+        return
+
+    if command == "/model":
+        await message.channel.send(f"Brain model: {mw.active_model_info()}")
         return
 
     print(f"[discord-bot] <- {text!r}")

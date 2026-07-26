@@ -1,0 +1,19 @@
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+
+# Secrets and private data are provided at runtime (env_file + mounted volumes),
+# never baked into the image.
+.env
+data/profile.md
+data/resume/*
+src/resume/
+src/delivery_agent/credentials/
+credentials.json
+token.json
+
+README.md

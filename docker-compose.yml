@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: multi-agent-bot
+    # Survive crashes and server reboots.
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Private files stay on the host instead of inside the image.
+      - ./data:/app/data:ro
+      - ./src/resume:/app/src/resume:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

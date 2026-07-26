@@ -13,8 +13,11 @@ Set DISCORD_ALLOWED_USER_ID to your Discord user id so only you can drive it.
 import asyncio
 import importlib.util
 import os
+import socket
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import discord
 from dotenv import load_dotenv
@@ -42,6 +45,82 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 ALLOWED_USER_ID = os.getenv("DISCORD_ALLOWED_USER_ID", "").strip()
 
 BRIEFING_COMMANDS = {"/daily": "daily", "/news": "news", "/jobs": "jobs", "/watch": "watch"}
+
+# --- Built-in scheduler -----------------------------------------------------
+# One deployment gives you chat AND automatic briefings, so no external cron is
+# needed on the host. Times are local to TIMEZONE (default Nepal).
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Kathmandu").strip() or "Asia/Kathmandu"
+# e.g. "07:30" or "07:30=daily,19:00=news". Blank disables the scheduler.
+BRIEFING_SCHEDULE = os.getenv("BRIEFING_SCHEDULE", "").strip()
+DEFAULT_BRIEFING = os.getenv("BRIEFING_NAME", "daily").strip() or "daily"
+
+
+def parse_schedule(spec: str, default_name: str = "daily") -> list[tuple[int, int, str]]:
+    """Parse "07:30" or "07:30=daily,19:00=news" into [(hour, minute, briefing)]."""
+    entries: list[tuple[int, int, str]] = []
+    for raw in spec.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        name = default_name
+        if "=" in item:
+            item, name = (part.strip() for part in item.split("=", 1))
+        try:
+            hour_text, minute_text = item.split(":")
+            hour, minute = int(hour_text), int(minute_text)
+        except ValueError:
+            print(f"[scheduler] ignoring invalid schedule entry: {raw!r}")
+            continue
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            entries.append((hour, minute, name or default_name))
+        else:
+            print(f"[scheduler] ignoring out-of-range time: {raw!r}")
+    return entries
+
+
+def next_run(now: datetime, entries: list[tuple[int, int, str]]) -> tuple[datetime, str]:
+    """Return the soonest upcoming (datetime, briefing_name) after `now`."""
+    candidates = []
+    for hour, minute, name in entries:
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        candidates.append((target, name))
+    return min(candidates, key=lambda pair: pair[0])
+
+
+async def scheduler_loop() -> None:
+    entries = parse_schedule(BRIEFING_SCHEDULE, DEFAULT_BRIEFING)
+    if not entries:
+        print("[scheduler] disabled (set BRIEFING_SCHEDULE, e.g. 07:30=daily)")
+        return
+
+    zone = ZoneInfo(TIMEZONE)
+    listing = ", ".join(f"{h:02d}:{m:02d}->{n}" for h, m, n in entries)
+    print(f"[scheduler] active ({TIMEZONE}): {listing}")
+
+    while True:
+        now = datetime.now(zone)
+        target, name = next_run(now, entries)
+        wait_seconds = max(1.0, (target - now).total_seconds())
+        print(
+            f"[scheduler] next '{name}' at {target:%Y-%m-%d %H:%M} {TIMEZONE} "
+            f"(in {wait_seconds / 3600:.1f}h)"
+        )
+        try:
+            await asyncio.sleep(wait_seconds)
+        except asyncio.CancelledError:
+            raise
+
+        print(f"[scheduler] running briefing '{name}'")
+        try:
+            await asyncio.to_thread(mw.run_briefing, name)
+        except Exception as exc:
+            print(f"[scheduler] briefing '{name}' failed: {exc}")
+        # Nudge past the target so the same slot cannot fire twice.
+        await asyncio.sleep(61)
+
+
 HELP_TEXT = (
     "I'm your multi-agent assistant. Send a question and I'll route it to the right "
     "specialist.\n\n"
@@ -80,9 +159,17 @@ async def send_long(channel, text: str) -> None:
         await channel.send(chunk)
 
 
+_scheduler_task: asyncio.Task | None = None
+
+
 @client.event
 async def on_ready():
+    global _scheduler_task
     print(f"[discord-bot] logged in as {client.user}. Listening for messages...")
+    print(f"[discord-bot] brain model: {mw.active_model_info()}")
+    # on_ready fires again after every reconnect, so only start the loop once.
+    if _scheduler_task is None or _scheduler_task.done():
+        _scheduler_task = asyncio.create_task(scheduler_loop())
 
 
 @client.event
@@ -146,10 +233,43 @@ async def on_message(message: discord.Message):
     await send_long(message.channel, answer)
 
 
+# Held for the process lifetime; binding fails if another instance already owns it.
+_instance_lock: socket.socket | None = None
+
+
+def acquire_single_instance_lock() -> bool:
+    """Prevent a second bot instance (two instances = every message answered twice).
+
+    Binds a loopback port as the lock: the OS releases it automatically when the
+    process dies, so there is no stale lock file to clean up.
+    """
+    global _instance_lock
+    port = int(os.getenv("BOT_LOCK_PORT", "47821"))
+    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        lock.bind(("127.0.0.1", port))
+    except OSError:
+        lock.close()
+        return False
+    _instance_lock = lock
+    return True
+
+
 def main() -> None:
-    if not TOKEN:
-        print("Set DISCORD_BOT_TOKEN in .env first.")
+    # Fail fast with an actionable message rather than a confusing runtime error.
+    from src.config_check import report
+
+    if not report(require_bot=True):
         return
+
+    if not acquire_single_instance_lock():
+        print(
+            "[discord-bot] another instance is already running - exiting.\n"
+            "  (Two instances would reply to every message twice. Stop the other one "
+            "first, or set BOT_LOCK_PORT to run a separate bot deliberately.)"
+        )
+        return
+
     client.run(TOKEN)
 
 

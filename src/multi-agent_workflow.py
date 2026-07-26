@@ -1694,9 +1694,14 @@ if __name__ == "__main__":
     parser.add_argument("--channel", help="override delivery channel: email or telegram")
     parser.add_argument("--no-deliver", action="store_true", help="print instead of delivering")
     parser.add_argument("--test-delivery", action="store_true", help="send a test message and exit")
+    parser.add_argument("--check-config", action="store_true", help="validate .env and exit")
     args = parser.parse_args()
 
-    if args.test_delivery:
+    if args.check_config:
+        from src.config_check import report
+
+        report(exit_on_error=True)
+    elif args.test_delivery:
         _send_test_message(args.channel)
     elif args.briefing:
         run_briefing(args.briefing, args.channel)

@@ -42,6 +42,9 @@ Run it:
 
 ```powershell
 uv run python src/multi-agent_workflow.py
+
+# Check your .env is complete before anything else
+uv run python src/multi-agent_workflow.py --check-config
 ```
 
 ## From "I ask" to "it delivers" (proactive briefings)
@@ -306,6 +309,142 @@ replies).
    (Your user id: enable Developer Mode in Discord, right-click your name → Copy ID.)
 5. Run: `uv run python src/discord_bot.py` — then message the bot in your server.
    Commands: `/daily` `/news` `/jobs` `/watch` `/help`.
+
+## Running it 24/7 on your own PC (no card, no signup)
+
+Every cloud provider now requires a payment method for verification, so the simplest
+always-on option is your own machine. The bot runs whenever the PC is on, restarts
+itself if it crashes, and starts automatically when you log in.
+
+```powershell
+# 1. Confirm your configuration is complete
+uv run python src/multi-agent_workflow.py --check-config
+
+# 2. Enable automatic briefings in .env (optional)
+#    BRIEFING_SCHEDULE=07:30=daily,19:00=news
+#    TIMEZONE=Asia/Kathmandu
+
+# 3. Install auto-start (registers a Scheduled Task, runs at log on)
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+
+# 4. Start it now without rebooting
+Start-ScheduledTask -TaskName MultiAgentDiscordBot
+
+# 5. Watch the log
+Get-Content logs\bot.log -Wait -Tail 30
+```
+
+To run it in the foreground instead (handy while testing), skip the task and use the
+supervisor directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_bot.ps1
+```
+
+Remove auto-start with `powershell -ExecutionPolicy Bypass -File scripts\uninstall_autostart.ps1`.
+
+**What this gives you**
+
+- `scripts\run_bot.ps1` restarts the bot 15s after any crash, appending to
+  `logs\bot.log` (rotated at ~5 MB).
+- The Scheduled Task has no execution time limit, so Windows won't kill it.
+- The bot holds a **single-instance lock** (a loopback port), so a second copy exits
+  immediately instead of replying to every message twice. Override with
+  `BOT_LOCK_PORT` if you ever want two bots on purpose.
+
+**Limitation:** the bot is offline while the PC is asleep or off. For true 24/7,
+either leave the machine on (disable sleep) or move to a cloud VM later — the
+`Dockerfile` below deploys the same code unchanged.
+
+## Hosting it 24/7 on a cloud VM (Oracle Cloud Always Free)
+
+Note: Oracle asks for a card for **identity verification only** (Always Free
+resources are never charged), and international cards from some countries can fail
+that check. If you're a student, **GitHub Student Pack → Azure for Students** gives
+credit with no card required.
+
+
+
+The Discord bot holds a persistent gateway connection, so it needs an always-on
+process (serverless platforms won't work). This repo ships a `Dockerfile` and
+`docker-compose.yml`, and the bot runs its **own scheduler**, so a single deployment
+gives you chat *and* automatic briefings — no cron or Task Scheduler needed.
+
+### 1. Create the free VM
+
+1. Sign up at [cloud.oracle.com](https://cloud.oracle.com) (card needed for identity
+   verification only — pick **Always Free** resources).
+2. **Compute → Instances → Create Instance.**
+3. Image: **Ubuntu 22.04**. Shape: **VM.Standard.A1.Flex** (Ampere ARM) — set
+   **1–2 OCPU / 6–12 GB RAM**, all within Always Free.
+4. Save the **SSH private key** when prompted, then create the instance and copy its
+   public IP.
+
+### 2. Connect and install Docker
+
+```bash
+ssh -i /path/to/your-key.key ubuntu@YOUR_PUBLIC_IP
+
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker $USER && newgrp docker
+```
+
+### 3. Get the code onto the VM
+
+Use a **private** GitHub repo (never public — it would expose your work, and any
+committed secret gets scraped within minutes):
+
+```bash
+git clone https://github.com/<you>/<your-private-repo>.git multi-agent
+cd multi-agent
+```
+
+### 4. Add the files that are gitignored
+
+`.env`, your resume, and `data/profile.md` are deliberately not in git, so copy them
+up from your PC (run these **locally**, not on the VM):
+
+```powershell
+scp -i C:\path\to\key.key .env ubuntu@YOUR_PUBLIC_IP:~/multi-agent/.env
+scp -i C:\path\to\key.key data\profile.md ubuntu@YOUR_PUBLIC_IP:~/multi-agent/data/profile.md
+scp -i C:\path\to\key.key src\resume\AnkitResume.pdf ubuntu@YOUR_PUBLIC_IP:~/multi-agent/src/resume/
+```
+
+### 5. Turn on the scheduler, then start
+
+In `.env` on the VM, enable automatic briefings (times are in `TIMEZONE`):
+
+```env
+BRIEFING_SCHEDULE=07:30=daily,19:00=news
+TIMEZONE=Asia/Kathmandu
+DELIVERY_CHANNEL=discord
+```
+
+Verify the configuration before starting (catches a missing key, a value you forgot
+to replace, or a delivery channel without its credentials):
+
+```bash
+docker compose run --rm bot uv run python -m src.config_check --bot
+```
+
+```bash
+docker compose up -d --build      # build and run in the background
+docker compose logs -f            # watch it boot (Ctrl+C to stop watching)
+```
+
+You should see `logged in as Mark`, the brain model, and a `[scheduler] next 'daily'
+at ...` line. `restart: unless-stopped` means it survives crashes and VM reboots.
+
+### Everyday commands
+
+```bash
+docker compose logs -f            # tail logs
+docker compose restart            # restart the bot
+docker compose down               # stop it
+git pull && docker compose up -d --build   # deploy an update
+```
+
+Now you can message the bot from your phone any time — your PC can be off.
 
 ## Making the agents smarter
 

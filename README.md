@@ -34,6 +34,51 @@ Specialists:
 Each plan step is logged with the specialist chosen and the reason, so you can see
 how the commander allocated resources.
 
+### Execution modes (swarm)
+
+The commander also decides *how* the agents run, and logs its choice:
+
+- **solo** — one specialist answers. Used for most requests, so simple questions
+  don't pay the cost of a committee.
+- **parallel** — several specialists attack the **same** question from different
+  angles **at the same time**, then an aggregator merges them: where they agree
+  (higher confidence), where they conflict, and one clear conclusion. This is the
+  swarm / mixture-of-agents path — use it for open analytical questions ("find the
+  market gap for X", "evaluate this opportunity").
+- **sequential** — later steps need earlier output (research → write it up). Each
+  step receives the previous steps' findings as shared context.
+
+Fan-out is capped by `SWARM_MAX_WORKERS` (default 3). Parallel agents multiply
+tokens-per-minute, so on a free provider tier expect rate-limit retries — they are
+handled automatically, they just make the run slower.
+
+### Token cost control
+
+An agent re-sends its whole message history on every round, so accumulated tool
+output — not the prompts — is what actually drains a daily quota. Left unchecked one
+swarm query can cost ~70k tokens (most free tiers allow 100k/day). Four controls keep
+that in check:
+
+| Control | Effect |
+|---|---|
+| `MAX_TOOL_RESULT_CHARS` (1500) | caps each tool result before it enters context |
+| `TOOL_HISTORY_KEEP_FULL` (2) | older results collapse to a stub — stops quadratic growth (~55% smaller histories) |
+| `max_rounds` (4 per agent) | fewer accumulation steps |
+| `MAX_SWARM_AGENTS` (3) | fewer parallel agents |
+
+Plus a budget guard: once estimated usage passes `SWARM_BUDGET_FRACTION` of
+`DAILY_TOKEN_BUDGET`, swarms automatically downgrade to a single agent so the rest of
+the day still works.
+
+```env
+SWARM_MAX_WORKERS=3
+MAX_SWARM_AGENTS=3
+MAX_TOOL_RESULT_CHARS=1500
+TOOL_HISTORY_KEEP_FULL=2
+DAILY_TOKEN_BUDGET=100000
+SWARM_BUDGET_FRACTION=0.6
+```
+
 Adding a specialist is a one-entry change in `SPECIALIST_ROUTES` in
 `src/multi-agent_workflow.py` (prompt, tools, max tool rounds); the graph wires
 its node, tool node, and edges automatically.
@@ -446,13 +491,120 @@ git pull && docker compose up -d --build   # deploy an update
 
 Now you can message the bot from your phone any time — your PC can be off.
 
+## Observability (built in, no signup)
+
+Every request is traced to `logs/runs.jsonl` — the mode the commander chose, each
+agent's runtime, every tool call and failure, total duration, and the final answer.
+No account, no external service, works offline.
+
+```powershell
+uv run python src/multi-agent_workflow.py --stats   # summary of recent runs
+uv run python -m src.observability --last           # full JSON of the last run
+```
+
+The summary shows where time actually goes and what breaks:
+
+```
+time                 mode          secs  tools  fail  query
+2026-07-29T22:47:46  parallel     119.7     12     0  Should I invest in gold right now...
+
+Slowest agents (avg seconds):
+  market_opportunity_agent       84.9s  (1 runs)
+  news_agent                     57.9s  (1 runs)
+  critic                         12.7s  (1 runs)
+```
+
+Disable with `RUN_TRACING=false`.
+
+### Optional hosted tracing
+
+If you later want a full trace UI, these plug into LangChain/LangGraph:
+
+- **Langfuse** — open source, self-hostable for free, or a free cloud tier.
+- **Arize Phoenix** — fully local, no account, OpenTelemetry-based.
+- **LangSmith** — deepest LangGraph integration (just env vars, no code), but the
+  free tier is limited and it becomes paid past that:
+
+  ```env
+  LANGSMITH_TRACING=true
+  LANGSMITH_API_KEY=ls__your_key
+  LANGSMITH_PROJECT=multi-agent
+  ```
+
+### Critic pass
+
+In `parallel` mode, after the aggregator merges the swarm, a **CriticAgent** reviews
+the draft against the raw findings — removing unsupported claims, surfacing
+contradictions the merge glossed over, restoring dropped findings, and adding missing
+source URLs. It costs one extra LLM call (far cheaper than multi-round debate) and
+falls back to the draft if anything goes wrong.
+
+```env
+ENABLE_CRITIC=true
+```
+
 ## Making the agents smarter
 
 - **User profile** — `data/profile.md` (or `USER_PROFILE` in `.env`) is injected into
   every agent so answers stay personalized to you without re-explaining yourself.
-- **Model** — the single biggest lever. `GROQ_MODEL` defaults to a small 20B model;
-  switch to `openai/gpt-oss-120b` or `llama-3.3-70b-versatile` for noticeably better
-  reasoning and routing.
+- **Model** — the single biggest lever. Defaults to `llama-3.3-70b-versatile`, which
+  has reliable tool-calling (avoid `gpt-oss-*` on Groq for the agents; they
+  intermittently emit malformed tool calls).
+
+### Model fallback (never dead-end on a rate limit)
+
+Provider quotas are **per model**, so when the primary is exhausted for the day the
+next model still has budget. The chain is tried in order and switches automatically:
+
+```
+llama-3.3-70b-versatile (Groq)
+  -> llama-3.1-8b-instant (Groq)
+  -> openai/gpt-oss-120b (Groq)
+  -> moonshotai/kimi-k2.6 (NVIDIA)   # only if NVIDIA_API_KEY is set
+```
+
+```env
+LLM_FALLBACK_MODELS=llama-3.1-8b-instant,openai/gpt-oss-120b
+LLM_FALLBACK_NVIDIA_MODEL=moonshotai/kimi-k2.6
+```
+
+Errors are classified so the response is appropriate:
+
+| Error | Behaviour |
+|---|---|
+| Per-**minute** limit (TPM) | wait and retry the same model (it will clear) |
+| Per-**day** limit (TPD) | skip retries, switch model immediately |
+| Malformed tool call | quick retry |
+| Bad key / unknown model | switch provider |
+
+Adding a second provider (NVIDIA) gives a completely separate quota pool, which is
+the most effective way to stop hitting daily caps.
+
+**Verify a fallback model before adding it.** It must be reachable by your account
+*and* support tool calling, otherwise agents fall back to dumping raw tool output.
+Checked on this project: `moonshotai/kimi-k2.6` returns 404, `kimi-k2-instruct`
+returns 410, and `z-ai/glm-5.2` times out — `nvidia/llama-3.3-nemotron-super-49b-v1.5`
+works with tools and is the default.
+
+### Search resilience
+
+A swarm can fire dozens of searches a minute, which DuckDuckGo throttles. All search
+tools go through `src/search_core.py`, which adds a global throttle between outbound
+requests, retries with backoff, and a shared short-lived cache so parallel agents
+don't repeat each other's queries.
+
+```env
+SEARCH_MIN_INTERVAL=1.2   # seconds between real outbound searches
+SEARCH_MAX_RETRIES=3
+SEARCH_CACHE_TTL=900      # reuse identical queries for 15 minutes
+```
+
+### Agent selectivity
+
+The planner is told to add an agent only when it contributes something the others
+cannot, and a hard filter enforces it: an agent whose required input is missing is
+dropped (e.g. `vision_agent` when the request contains no image), and plans are
+capped at `MAX_SWARM_AGENTS` (default 4).
 
 ## Gmail MCP server
 

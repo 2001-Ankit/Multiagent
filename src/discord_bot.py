@@ -226,7 +226,7 @@ async def on_message(message: discord.Message):
 
     await message.channel.send("On it - working through the agents. This can take a minute...")
     try:
-        answer = await asyncio.to_thread(mw.answer_only, text)
+        answer = await asyncio.to_thread(mw.run_and_answer, text, "discord")
     except Exception as exc:
         await message.channel.send(f"Sorry, something went wrong: {exc}")
         return

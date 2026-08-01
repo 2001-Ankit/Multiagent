@@ -1,6 +1,6 @@
 from typing import Any
 
-from ddgs import DDGS
+from src.search_core import DDGS
 from ddgs.exceptions import DDGSException
 from langchain.tools import tool
 

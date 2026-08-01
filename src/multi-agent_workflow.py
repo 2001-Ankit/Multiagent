@@ -3,7 +3,9 @@ import json
 import os
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Callable
@@ -15,6 +17,7 @@ from langchain_core.messages import (
     HumanMessage,
     RemoveMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -86,6 +89,7 @@ from src.travel_agent.tools import (  # noqa: E402
     research_flights,
     research_visa_requirements,
 )
+from src import observability  # noqa: E402
 from src.vision_agent.tools import analyze_chart, describe_image  # noqa: E402
 from src.search_agent.tools import (  # noqa: E402
     extract_url_content,
@@ -567,7 +571,7 @@ SPECIALIST_ROUTES = {
     "finance_agent": {
         "prompt": FINANCE_PROMPT,
         "tools": FINANCE_TOOLS,
-        "max_rounds": 8,
+        "max_rounds": 4,
         "description": (
             "financial markets, investing, trading, stocks, companies, sectors, forex, "
             "currencies, crypto, commodities, macro/interest-rate questions, portfolio "
@@ -577,7 +581,7 @@ SPECIALIST_ROUTES = {
     "news_agent": {
         "prompt": NEWS_PROMPT,
         "tools": NEWS_TOOLS,
-        "max_rounds": 8,
+        "max_rounds": 4,
         "description": (
             "a daily news briefing or digest organized into sections such as finance, "
             "politics, sports (including live scores/results), world/top stories, or "
@@ -587,7 +591,7 @@ SPECIALIST_ROUTES = {
     "academic_agent": {
         "prompt": ACADEMIC_PROMPT,
         "tools": ACADEMIC_TOOLS,
-        "max_rounds": 6,
+        "max_rounds": 4,
         "description": (
             "graduate/abroad study in the US: finding universities and matching "
             "professors/labs to a student's research interest, admission requirements, "
@@ -597,7 +601,7 @@ SPECIALIST_ROUTES = {
     "job_finder_agent": {
         "prompt": JOB_FINDER_PROMPT,
         "tools": JOB_FINDER_TOOLS,
-        "max_rounds": 7,
+        "max_rounds": 4,
         "description": (
             "finding jobs that match the candidate's resume, checking eligibility "
             "(remote region locks, work authorization/visa for the candidate's "
@@ -608,7 +612,7 @@ SPECIALIST_ROUTES = {
     "market_opportunity_agent": {
         "prompt": MARKET_PROMPT,
         "tools": MARKET_TOOLS,
-        "max_rounds": 7,
+        "max_rounds": 4,
         "description": (
             "spotting business/product/startup opportunities: market trends and size, "
             "unmet needs and gaps, competitor landscape, demand and funding signals, "
@@ -618,7 +622,7 @@ SPECIALIST_ROUTES = {
     "learning_agent": {
         "prompt": LEARNING_PROMPT,
         "tools": LEARNING_TOOLS,
-        "max_rounds": 6,
+        "max_rounds": 4,
         "description": (
             "upskilling and learning plans: finding the skill gaps between the user's "
             "resume and a target role or skill, and building a prioritized roadmap of "
@@ -628,7 +632,7 @@ SPECIALIST_ROUTES = {
     "scholarship_agent": {
         "prompt": SCHOLARSHIP_PROMPT,
         "tools": SCHOLARSHIP_TOOLS,
-        "max_rounds": 6,
+        "max_rounds": 4,
         "description": (
             "scholarships, fellowships, and study funding the user is eligible for by "
             "nationality/field/level, including eligibility, award, deadlines, and how "
@@ -648,7 +652,7 @@ SPECIALIST_ROUTES = {
     "travel_agent": {
         "prompt": TRAVEL_PROMPT,
         "tools": TRAVEL_TOOLS,
-        "max_rounds": 6,
+        "max_rounds": 4,
         "description": (
             "travel and relocation planning: visa requirements for the traveler's "
             "passport, cost of living, flights/fares, and a step-by-step trip plan "
@@ -658,7 +662,7 @@ SPECIALIST_ROUTES = {
     "content_agent": {
         "prompt": CONTENT_PROMPT,
         "tools": CONTENT_TOOLS,
-        "max_rounds": 5,
+        "max_rounds": 4,
         "description": (
             "short-form social content: a single LinkedIn post, an X/Twitter thread, "
             "or a caption, grounded in current facts and the user's background"
@@ -667,7 +671,7 @@ SPECIALIST_ROUTES = {
     "ghostwriter_agent": {
         "prompt": GHOSTWRITER_PROMPT,
         "tools": GHOSTWRITER_TOOLS,
-        "max_rounds": 6,
+        "max_rounds": 4,
         "description": (
             "publish-ready long-form writing: newsletters, blog posts/articles, and "
             "longer pieces, researched and grounded with sources (ghostwriting)"
@@ -676,7 +680,7 @@ SPECIALIST_ROUTES = {
     "price_watch_agent": {
         "prompt": PRICE_WATCH_PROMPT,
         "tools": PRICE_WATCH_TOOLS,
-        "max_rounds": 6,
+        "max_rounds": 4,
         "description": (
             "checking current prices of stocks, crypto, currencies, or products "
             "against a target/threshold and giving a clear act/watch/no-action verdict"
@@ -685,25 +689,42 @@ SPECIALIST_ROUTES = {
 }
 
 COMMANDER_PLAN_PROMPT = """You are CommanderAgent, the workflow orchestrator.
-Break the user's request into an ordered plan of steps. Each step assigns a task
-to exactly one specialist. Most requests need only one step; use multiple steps
-only when the request genuinely spans different specialists.
+Decide HOW MANY agents the request needs, WHICH ones, and HOW they should run.
 
 Available specialists:
 {catalog}
 - direct: answer from general reasoning, no external research needed.
 
-Also decide the delivery channel: "email", "telegram", or "whatsapp". Default to "{default_channel}"
-unless the user clearly asks for a specific channel.
+Be selective. An extra agent is only worth it if it contributes something the others
+genuinely cannot. Rules:
+- Never add an agent that has no input to work with. In particular, only use
+  vision_agent when the request actually contains an image URL or file path.
+- Never add an agent whose findings would duplicate another agent's.
+- In parallel mode prefer 2-3 agents; more agents is slower and rarely better.
+- If one specialist can fully satisfy the request, use "solo" - that is the norm.
 
-For every step include a short "reason" explaining why that specialist is the right
-resource for the task.
+Choose an execution mode:
+- "solo": one specialist fully answers the request. Use this for most requests -
+  do not add agents that would only pad the answer.
+- "parallel": the request benefits from several DIFFERENT perspectives examined at
+  the same time, then merged. Use for open/analytical questions like evaluating an
+  opportunity, a decision, or a market from multiple angles. Give each agent a
+  DISTINCT angle on the SAME question so their findings complement, not duplicate.
+- "sequential": later steps genuinely need the OUTPUT of earlier steps (research
+  first, then write it up). Each step sees the previous steps' findings.
+
+Also decide the delivery channel: "email", "telegram", "whatsapp", or "discord".
+Default to "{default_channel}" unless the user clearly asks for a specific channel.
+
+For every step include a short "reason" explaining why that specialist is right.
 
 Return JSON only, no prose:
-{{"steps":[{{"agent":"<specialist>","task":"<clear task>","reason":"<why this specialist>"}}],
-"delivery_channel":"email", "telegram", or "whatsapp"}}
+{{"mode":"solo" or "parallel" or "sequential",
+"steps":[{{"agent":"<specialist>","task":"<clear task>","reason":"<why this specialist>"}}],
+"delivery_channel":"{default_channel}"}}
 
-Keep the plan minimal ({max_steps} steps max). Choose specialists by meaning, not
+Keep the plan minimal ({max_steps} steps max). Prefer "solo" unless multiple
+perspectives clearly produce a better answer. Choose specialists by meaning, not
 keywords."""
 
 COMMANDER_COMPOSE_PROMPT = """You are CommanderAgent.
@@ -712,6 +733,11 @@ gathered results below, write the final answer for the user.
 
 Guidelines:
 - Synthesize the results into one coherent answer; do not just concatenate them.
+- When several agents examined the same question from different angles, act as the
+  aggregator: merge their perspectives, call out where they AGREE (higher
+  confidence), where they DISAGREE or conflict (say so explicitly and explain the
+  tension), and what each angle uniquely contributed. Finish with a single clear
+  conclusion or recommendation, not a list of separate opinions.
 - If the results contain finance/market analysis, use a research-memo structure
   (Snapshot, Specific View, Suggested Action, Key Evidence, Risks, What To Watch,
   Sources) and make clear it is research, not personalized financial advice, and
@@ -723,6 +749,22 @@ Guidelines:
 - Include useful source URLs and timestamps from the results.
 - Be clear and readable. Avoid markdown tables unless the user explicitly asked.
 - Do not mention internal routing, agents, or this instruction.
+"""
+
+CRITIC_PROMPT = """You are CriticAgent, a demanding reviewer.
+
+You are given a user's request, the raw findings several specialists produced, and a
+draft answer that merged them. Improve the draft.
+
+Check for:
+- Claims in the draft that the findings do not actually support (remove or soften).
+- Contradictions between specialists that the draft glossed over (surface them).
+- Important findings that were dropped from the draft (add them back).
+- Vague filler that should be replaced with specifics from the findings.
+- Missing source URLs that exist in the findings.
+
+Return ONLY the improved final answer for the user - no commentary about your review,
+no "here is the revised version" preamble. Keep everything that was already good.
 """
 
 DIRECT_ANSWER_PROMPT = """You are CommanderAgent.
@@ -759,6 +801,68 @@ llm = ChatOpenAI(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Fallback chain
+# --------------------------------------------------------------------------- #
+# Provider quotas are per-model (and per-provider), so when one model is exhausted
+# for the day another still has budget. The chain is tried in order.
+def _build_llm_chain() -> list[dict]:
+    chain: list[dict] = [
+        {
+            "model": LLM_MODEL,
+            "base_url": LLM_BASE_URL,
+            "api_key": LLM_API_KEY,
+            "client": llm,
+        }
+    ]
+
+    # Same provider, different models -> separate per-model quotas.
+    extra_models = os.environ.get(
+        "LLM_FALLBACK_MODELS", "llama-3.1-8b-instant,openai/gpt-oss-120b"
+    )
+    for name in (m.strip() for m in extra_models.split(",")):
+        if name and name != LLM_MODEL:
+            chain.append(
+                {
+                    "model": name,
+                    "base_url": LLM_BASE_URL,
+                    "api_key": LLM_API_KEY,
+                    "client": None,
+                }
+            )
+
+    # Different provider entirely -> a completely separate quota pool.
+    nvidia_key = os.environ.get("NVIDIA_API_KEY", "").strip()
+    nvidia_model = os.environ.get(
+        "LLM_FALLBACK_NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    ).strip()
+    if nvidia_key and nvidia_model and "nvidia" not in LLM_BASE_URL:
+        chain.append(
+            {
+                "model": nvidia_model,
+                "base_url": "https://integrate.api.nvidia.com/v1",
+                "api_key": nvidia_key,
+                "client": None,
+            }
+        )
+    return chain
+
+
+LLM_CHAIN = _build_llm_chain()
+
+
+def _client_for(entry: dict) -> ChatOpenAI:
+    """Lazily create (and cache) the client for a fallback chain entry."""
+    if entry["client"] is None:
+        entry["client"] = ChatOpenAI(
+            model=entry["model"],
+            api_key=entry["api_key"],
+            base_url=entry["base_url"],
+            temperature=0,
+        )
+    return entry["client"]
+
+
 def _provider_name(base_url: str) -> str:
     if "groq" in base_url:
         return "Groq"
@@ -770,42 +874,58 @@ def _provider_name(base_url: str) -> str:
 
 
 def active_model_info() -> str:
-    """One-line description of the active brain LLM, for logs and bot commands."""
-    return f"{LLM_MODEL} via {_provider_name(LLM_BASE_URL)}"
+    """One-line description of the brain LLM and its fallbacks."""
+    primary = f"{LLM_MODEL} via {_provider_name(LLM_BASE_URL)}"
+    fallbacks = [
+        f"{entry['model']} ({_provider_name(entry['base_url'])})"
+        for entry in LLM_CHAIN[1:]
+    ]
+    if fallbacks:
+        return f"{primary} | fallbacks: {' -> '.join(fallbacks)}"
+    return primary
 
 
 # Log the active model once at startup so it's always visible in the console/bot logs.
-safe_print(f"[CONFIG] Brain LLM: {active_model_info()}  (base_url={LLM_BASE_URL})")
+safe_print(f"[CONFIG] Brain LLM: {active_model_info()}")
 
 
-def robust_invoke(runnable, messages, retries: int = 5, base_delay: float = 3.0):
-    """Invoke an LLM/runnable with retry + backoff on transient provider errors.
+def _classify_error(exc: Exception) -> str:
+    """transient | minute_limit | quota_exhausted | fatal."""
+    text = str(exc).lower()
+    if "429" in text or "rate limit" in text or "rate_limit" in text:
+        # A per-day//per-month cap will not clear by waiting a few seconds, so
+        # switch models instead of sleeping.
+        if "per day" in text or "tpd" in text or "rpd" in text or "per month" in text:
+            return "quota_exhausted"
+        return "minute_limit"
+    if (
+        "output_parse_failed" in text
+        or "could not be parsed" in text
+        or "failed_generation" in text
+        or "tool_use_failed" in text
+        or "tool choice is none" in text
+    ):
+        return "transient"
+    if "401" in text or "403" in text or "invalid api key" in text:
+        return "quota_exhausted"  # bad/absent key for this provider: try the next
+    if "model_not_found" in text or "does not exist" in text or "404" in text:
+        return "quota_exhausted"
+    return "fatal"
 
-    Retries on rate limits (HTTP 429) and on Groq's intermittent tool-call parse
-    failures (``output_parse_failed`` / "could not be parsed"), which small models
-    like gpt-oss emit sporadically. Honors the "try again in Xs" hint when present.
-    """
+
+def _invoke_one(runnable, messages, retries: int, base_delay: float):
+    """Invoke a single model, retrying only errors that a retry can actually fix."""
     last_error: Exception | None = None
     for attempt in range(retries):
         try:
             return runnable.invoke(messages)
-        except Exception as exc:  # noqa: BLE001 - want to inspect message text
+        except Exception as exc:  # noqa: BLE001 - inspect the provider message
             last_error = exc
-            text = str(exc).lower()
-            is_rate_limit = (
-                "429" in text or "rate limit" in text or "rate_limit" in text
-            )
-            is_parse_fail = (
-                "output_parse_failed" in text
-                or "could not be parsed" in text
-                or "failed_generation" in text
-                or "tool_use_failed" in text
-                or "tool choice is none" in text
-            )
-            if (not is_rate_limit and not is_parse_fail) or attempt == retries - 1:
+            kind = _classify_error(exc)
+            if kind in {"fatal", "quota_exhausted"} or attempt == retries - 1:
                 raise
 
-            if is_rate_limit:
+            if kind == "minute_limit":
                 delay = base_delay * (attempt + 1)
                 hint = re.search(r"try again in ([0-9.]+)\s*s", str(exc))
                 if hint:
@@ -816,7 +936,6 @@ def robust_invoke(runnable, messages, retries: int = 5, base_delay: float = 3.0)
                 )
                 time.sleep(min(delay, 30))
             else:
-                # Parse failure is usually transient; retry quickly.
                 safe_print(
                     f"[retry] model output parse failed; retrying "
                     f"(attempt {attempt + 1}/{retries})"
@@ -824,7 +943,276 @@ def robust_invoke(runnable, messages, retries: int = 5, base_delay: float = 3.0)
                 time.sleep(1.0)
     if last_error:
         raise last_error
-    raise RuntimeError("robust_invoke failed without an exception")
+    raise RuntimeError("invoke failed without an exception")
+
+
+def invoke_with_fallback(messages, tools: list | None = None, retries: int = 4):
+    """Invoke the brain LLM, falling back to the next model when one is exhausted.
+
+    Quotas are per-model and per-provider, so a model that is out of daily budget is
+    skipped in favour of the next entry in LLM_CHAIN instead of failing the request.
+    """
+    last_error: Exception | None = None
+    for index, entry in enumerate(LLM_CHAIN):
+        try:
+            client = _client_for(entry)
+        except Exception as exc:
+            last_error = exc
+            continue
+
+        runnable = client.bind_tools(tools) if tools else client
+        try:
+            result = _invoke_one(runnable, messages, retries, 3.0)
+            sent = sum(len(str(getattr(m, "content", ""))) for m in messages)
+            record_token_estimate(sent + len(str(getattr(result, "content", ""))))
+            return result
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            kind = _classify_error(exc)
+            has_next = index < len(LLM_CHAIN) - 1
+            if kind == "fatal" or not has_next:
+                raise
+            next_entry = LLM_CHAIN[index + 1]
+            safe_print(
+                f"[fallback] {entry['model']} unavailable ({kind}); "
+                f"switching to {next_entry['model']}"
+            )
+    if last_error:
+        raise last_error
+    raise RuntimeError("no LLM available in the fallback chain")
+
+
+def robust_invoke(runnable, messages, retries: int = 5):
+    """Deprecated shim kept for any external callers.
+
+    Prefer invoke_with_fallback(messages, tools=...) so the fallback model can be
+    given the same tools.
+    """
+    if runnable is llm:
+        return invoke_with_fallback(messages, retries=retries)
+    return _invoke_one(runnable, messages, retries, 3.0)
+
+
+# --------------------------------------------------------------------------- #
+# Swarm: run specialists concurrently on one problem, then aggregate
+# --------------------------------------------------------------------------- #
+# Parallel agents multiply token usage per minute, so keep the fan-out modest on
+# free provider tiers (rate-limit retries in robust_invoke absorb the rest).
+SWARM_MAX_WORKERS = int(os.environ.get("SWARM_MAX_WORKERS", "3"))
+
+# Token control. An agent re-sends its whole history every round, so raw tool output
+# is the dominant cost: N rounds of accumulating results grows quadratically. Capping
+# each result and compacting older ones keeps a request affordable on a free tier.
+MAX_TOOL_RESULT_CHARS = int(os.environ.get("MAX_TOOL_RESULT_CHARS", "1500"))
+TOOL_HISTORY_KEEP_FULL = int(os.environ.get("TOOL_HISTORY_KEEP_FULL", "2"))
+
+
+# Rough daily budget guard. Providers bill by token, so a swarm can quietly consume
+# a whole day's quota; when the estimate crosses the threshold we stop fanning out.
+DAILY_TOKEN_BUDGET = int(os.environ.get("DAILY_TOKEN_BUDGET", "100000"))
+SWARM_BUDGET_FRACTION = float(os.environ.get("SWARM_BUDGET_FRACTION", "0.6"))
+_budget_lock = threading.Lock()
+_budget_state = {"day": "", "tokens": 0}
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def record_token_estimate(chars: int) -> None:
+    """Track approximate tokens used today (~4 chars per token)."""
+    with _budget_lock:
+        if _budget_state["day"] != _today():
+            _budget_state["day"] = _today()
+            _budget_state["tokens"] = 0
+        _budget_state["tokens"] += max(0, chars) // 4
+
+
+def tokens_used_today() -> int:
+    with _budget_lock:
+        if _budget_state["day"] != _today():
+            return 0
+        return int(_budget_state["tokens"])
+
+
+def swarm_budget_available() -> bool:
+    """False once today's estimated usage passes the swarm cut-off."""
+    return tokens_used_today() < DAILY_TOKEN_BUDGET * SWARM_BUDGET_FRACTION
+
+
+def _cap_tool_output(text: str) -> str:
+    if len(text) <= MAX_TOOL_RESULT_CHARS:
+        return text
+    return text[:MAX_TOOL_RESULT_CHARS].rstrip() + "\n[...truncated]"
+
+
+def compact_tool_history(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Shrink older tool results so context doesn't grow round after round.
+
+    The newest TOOL_HISTORY_KEEP_FULL results stay intact (the agent is actively
+    reasoning about them); earlier ones collapse to a one-line placeholder.
+    """
+    tool_positions = [
+        index
+        for index, message in enumerate(messages)
+        if getattr(message, "type", None) == "tool"
+    ]
+    if len(tool_positions) <= TOOL_HISTORY_KEEP_FULL:
+        return messages
+
+    stale = set(tool_positions[:-TOOL_HISTORY_KEEP_FULL])
+    compacted: list[BaseMessage] = []
+    for index, message in enumerate(messages):
+        if index in stale:
+            content = str(message.content)
+            if len(content) > 300:
+                message = ToolMessage(
+                    content=content[:300].rstrip() + "\n[...earlier result trimmed]",
+                    tool_call_id=getattr(message, "tool_call_id", "") or "trimmed",
+                    name=getattr(message, "name", "tool"),
+                )
+        compacted.append(message)
+    return compacted
+
+
+def run_specialist_standalone(
+    agent_name: str,
+    task: str,
+    shared_context: str = "",
+) -> str:
+    """Run one specialist's full tool loop in isolation and return its answer.
+
+    Self-contained (no graph state), so several of these can run in parallel
+    threads. `shared_context` lets an agent see what other agents already found.
+    """
+    config = SPECIALIST_ROUTES.get(agent_name)
+    if not config:
+        return f"Unknown specialist: {agent_name}"
+
+    tools = config["tools"]
+    tools_by_name = {tool.name: tool for tool in tools}
+
+    system_prompt = with_profile(config["prompt"])
+    if shared_context.strip():
+        system_prompt += (
+            "\n\nFindings already gathered by other agents on this task - build on "
+            "them, do not repeat their work:\n"
+            f"{_truncate_for_context(shared_context, 4000)}"
+        )
+
+    messages: list[BaseMessage] = [HumanMessage(content=task)]
+    trace = observability.current()
+    agent_started = time.time()
+
+    for _ in range(config["max_rounds"]):
+        response = invoke_with_fallback(
+            [SystemMessage(content=system_prompt), *compact_tool_history(messages)],
+            tools=tools,
+        )
+        calls = getattr(response, "tool_calls", None)
+        if not calls:
+            if trace:
+                trace.agent_event(agent_name, time.time() - agent_started, True)
+            return str(response.content)
+
+        messages.append(response)
+        for call in calls:
+            tool = tools_by_name.get(call["name"])
+            tool_started = time.time()
+            if tool is None:
+                output = f"Unknown tool: {call['name']}"
+                if trace:
+                    trace.tool_event(
+                        agent_name, call["name"], 0.0, False, "unknown tool"
+                    )
+            else:
+                try:
+                    output = str(tool.invoke(call["args"]))
+                except Exception as exc:  # keep the loop alive on tool failure
+                    output = f"Tool {call['name']} failed: {exc}"
+                    if trace:
+                        trace.tool_event(
+                            agent_name,
+                            call["name"],
+                            time.time() - tool_started,
+                            False,
+                            str(exc),
+                        )
+                else:
+                    if trace:
+                        trace.tool_event(
+                            agent_name, call["name"], time.time() - tool_started, True
+                        )
+            messages.append(
+                ToolMessage(
+                    content=_cap_tool_output(output),
+                    tool_call_id=call.get("id", call["name"]),
+                    name=call["name"],
+                )
+            )
+
+    # Research budget spent: force a written answer from what was gathered.
+    finalizer = config.get("finalizer")
+    if finalizer is not None:
+        built = finalizer(messages)
+        if built:
+            return built
+    try:
+        final = invoke_with_fallback(
+            [
+                SystemMessage(
+                    content=system_prompt
+                    + "\n\nYou have reached the research limit. Do NOT request more "
+                    "tools. Write the complete final answer now from what you have."
+                ),
+                *messages,
+            ],
+        )
+        if not getattr(final, "tool_calls", None):
+            return str(final.content)
+    except Exception as exc:
+        safe_print(f"[swarm] {agent_name} finalize fell back: {exc}")
+    return build_tool_limit_answer(messages, agent_name)
+
+
+def run_swarm(steps: list[dict], shared_context: str = "") -> list[dict]:
+    """Run several specialists concurrently on the same problem (ConcurrentWorkflow).
+
+    Returns results in the original plan order so output stays deterministic.
+    """
+    workers = max(1, min(SWARM_MAX_WORKERS, len(steps)))
+    safe_print(
+        f"\n[SWARM] Dispatching {len(steps)} agents in parallel "
+        f"(max {workers} at a time):"
+    )
+    for step in steps:
+        safe_print(f"  - {step['agent']}: {step['task']}")
+
+    results: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                run_specialist_standalone, step["agent"], step["task"], shared_context
+            ): index
+            for index, step in enumerate(steps)
+        }
+        for future in futures:
+            index = futures[future]
+            step = steps[index]
+            try:
+                text = future.result()
+            except Exception as exc:
+                text = f"({step['agent']} failed: {exc})"
+                safe_print(f"[SWARM] {step['agent']} failed: {exc}")
+            else:
+                safe_print(f"[SWARM] {step['agent']} finished.")
+            results[index] = {
+                "agent": step["agent"],
+                "task": step["task"],
+                "result": text,
+            }
+
+    return [results[index] for index in sorted(results)]
 
 
 # --------------------------------------------------------------------------- #
@@ -838,16 +1226,49 @@ def commander_agent(state: AgentState):
 
     # 1. Build the plan on first entry.
     if not plan:
-        plan, channel = build_plan(state)
+        plan, channel, mode = build_plan(state)
         step_index = 0
         step_results = []
+        trace = observability.current()
+        if trace:
+            trace.set_plan(mode, plan, channel, active_model_info())
         safe_print(f"\n[TRACE] Brain model: {active_model_info()}")
+        safe_print(f"[TRACE] Execution mode: {mode}")
         safe_print("[TRACE] Commander selected resources for this request:")
         for i, step in enumerate(plan, start=1):
             safe_print(f"  {i}. {step['agent']}")
             safe_print(f"     task:   {step['task']}")
             safe_print(f"     reason: {step.get('reason', 'no reason provided')}")
         safe_print(f"[TRACE] Delivery channel: {channel}")
+
+        # Parallel mode: run every specialist at once, then go straight to the
+        # aggregator. Nothing to dispatch through the graph one-by-one.
+        swarm_steps = [step for step in plan if step["agent"] != "direct"]
+        if mode == "parallel" and len(swarm_steps) > 1 and not swarm_budget_available():
+            # Today's budget is mostly spent: answer with the single best agent
+            # instead of burning what's left on a fan-out.
+            safe_print(
+                f"[BUDGET] ~{tokens_used_today():,} tokens used today; "
+                "running solo instead of a swarm to preserve quota."
+            )
+            plan = swarm_steps[:1]
+            mode = "solo"
+            swarm_steps = plan
+
+        if mode == "parallel" and len(swarm_steps) > 1:
+            step_results = run_swarm(swarm_steps)
+            final_answer = compose_final_answer(state, step_results)
+            safe_print("[TRACE] Commander aggregated the swarm results.")
+            final_answer = run_critic_pass(state, step_results, final_answer)
+            return {
+                "messages": [AIMessage(content=final_answer)],
+                "plan": plan,
+                "step_index": len(plan),
+                "step_results": step_results,
+                "current_agent": "delivery_agent",
+                "awaiting_result": False,
+                "delivery_channel": channel,
+            }
 
     # 2. Harvest the result of the step we just dispatched.
     if state.get("awaiting_result"):
@@ -872,8 +1293,7 @@ def commander_agent(state: AgentState):
         task = step["task"]
 
         if agent == "direct":
-            response = robust_invoke(
-                llm,
+            response = invoke_with_fallback(
                 [SystemMessage(content=with_profile(DIRECT_ANSWER_PROMPT)), HumanMessage(content=task)],
             )
             step_results.append(
@@ -890,7 +1310,7 @@ def commander_agent(state: AgentState):
             "current_agent": agent,
             "awaiting_result": True,
             "delivery_channel": channel,
-            "work_messages": _reset_work_messages(state, task),
+            "work_messages": _reset_work_messages(state, task, step_results),
         }
 
     # 4. All steps done: compose the final answer.
@@ -911,7 +1331,7 @@ def route_from_commander(state: AgentState) -> str:
     return state["current_agent"]
 
 
-def build_plan(state: AgentState) -> tuple[list, str]:
+def build_plan(state: AgentState) -> tuple[list, str, str]:
     user_question = str(state["messages"][0].content)
     catalog = "\n".join(
         f"- {name}: {cfg['description']}" for name, cfg in SPECIALIST_ROUTES.items()
@@ -923,20 +1343,53 @@ def build_plan(state: AgentState) -> tuple[list, str]:
     )
 
     try:
-        response = robust_invoke(
-            llm,
+        response = invoke_with_fallback(
             [SystemMessage(content=with_profile(prompt)), HumanMessage(content=user_question)],
         )
-        plan, channel = parse_plan(str(response.content))
+        plan, channel, mode = parse_plan(str(response.content))
+        plan = filter_viable_steps(plan, user_question)
         if plan:
-            return plan, channel
+            if len(plan) <= 1:
+                mode = "solo"
+            return plan, channel, mode
     except Exception as exc:
         safe_print(f"\n[TRACE] Commander planning fallback used: {exc}")
 
-    return fallback_plan(user_question), DEFAULT_DELIVERY_CHANNEL
+    return fallback_plan(user_question), DEFAULT_DELIVERY_CHANNEL, "solo"
 
 
-def parse_plan(content: str) -> tuple[list, str]:
+MAX_SWARM_AGENTS = int(os.environ.get("MAX_SWARM_AGENTS", "3"))
+_IMAGE_HINT = re.compile(
+    r"(https?://\S+\.(?:png|jpe?g|webp|gif)|\S+\.(?:png|jpe?g|webp|gif)\b)", re.IGNORECASE
+)
+
+
+def filter_viable_steps(steps: list, user_question: str) -> list:
+    """Drop agents that cannot contribute, so the swarm doesn't burn budget on them.
+
+    The planner sometimes adds a specialist whose required input is missing (most
+    often vision_agent with no image), which costs tokens and returns nothing useful.
+    """
+    viable = []
+    for step in steps:
+        agent = step.get("agent", "")
+        if agent == "vision_agent" and not _IMAGE_HINT.search(user_question):
+            safe_print("[TRACE] Dropped vision_agent from plan: no image in the request.")
+            continue
+        viable.append(step)
+
+    if len(viable) > MAX_SWARM_AGENTS:
+        safe_print(
+            f"[TRACE] Trimmed plan from {len(viable)} to {MAX_SWARM_AGENTS} agents."
+        )
+        viable = viable[:MAX_SWARM_AGENTS]
+
+    # Never return an empty plan.
+    return viable or steps[:1]
+
+
+def parse_plan(content: str) -> tuple[list, str, str]:
+    """Parse the planner JSON into (steps, delivery_channel, execution_mode)."""
     match = re.search(r"\{.*\}", content, flags=re.DOTALL)
     if not match:
         raise ValueError("planner response did not contain JSON")
@@ -947,6 +1400,10 @@ def parse_plan(content: str) -> tuple[list, str]:
     if channel not in {"email", "telegram", "whatsapp", "discord"}:
         channel = DEFAULT_DELIVERY_CHANNEL
 
+    mode = str(parsed.get("mode", "solo")).lower().strip()
+    if mode not in {"solo", "parallel", "sequential"}:
+        mode = "solo"
+
     valid_agents = set(SPECIALIST_ROUTES) | {"direct"}
     steps = []
     for raw in raw_steps[:MAX_PLAN_STEPS]:
@@ -956,7 +1413,11 @@ def parse_plan(content: str) -> tuple[list, str]:
         if agent in valid_agents and task:
             steps.append({"agent": agent, "task": task, "reason": reason})
 
-    return steps, channel
+    # A single step is solo by definition, whatever the model claimed.
+    if len(steps) <= 1:
+        mode = "solo"
+
+    return steps, channel, mode
 
 
 def fallback_plan(user_question: str) -> list:
@@ -1129,6 +1590,53 @@ def looks_like_live_research_request(question: str) -> bool:
     return any(term in lowered for term in live_terms)
 
 
+ENABLE_CRITIC = os.environ.get("ENABLE_CRITIC", "true").strip().lower() not in {
+    "0",
+    "false",
+    "off",
+}
+
+
+def run_critic_pass(state: AgentState, step_results: list, draft: str) -> str:
+    """One reviewer pass over a merged swarm answer.
+
+    Much cheaper than multi-round debate but catches the main failure modes:
+    unsupported claims, buried contradictions, dropped findings, missing sources.
+    Falls back to the draft on any failure so a critic error never loses the answer.
+    """
+    if not ENABLE_CRITIC or not draft.strip():
+        return draft
+
+    user_question = str(state["messages"][0].content)
+    findings = _truncate_for_context(
+        "\n\n".join(f"[{e['agent']}] {e['result']}" for e in step_results), 6000
+    )
+    started = time.time()
+    try:
+        response = invoke_with_fallback(
+            [
+                SystemMessage(content=with_profile(CRITIC_PROMPT)),
+                HumanMessage(content=f"User request:\n{user_question}"),
+                HumanMessage(content=f"Specialist findings:\n{findings}"),
+                HumanMessage(content=f"Draft answer to improve:\n{draft}"),
+            ],
+        )
+    except Exception as exc:
+        safe_print(f"[TRACE] Critic pass skipped: {exc}")
+        return draft
+
+    revised = str(response.content).strip()
+    trace = observability.current()
+    if trace:
+        trace.agent_event("critic", time.time() - started, bool(revised))
+    if len(revised) < len(draft) * 0.5:
+        # A drastically shorter result usually means the critic misfired.
+        safe_print("[TRACE] Critic output looked truncated; keeping the draft.")
+        return draft
+    safe_print("[TRACE] Critic pass refined the answer.")
+    return revised
+
+
 def compose_final_answer(state: AgentState, step_results: list) -> str:
     user_question = str(state["messages"][0].content)
 
@@ -1146,8 +1654,7 @@ def compose_final_answer(state: AgentState, step_results: list) -> str:
         )
     gathered = _truncate_for_context("\n\n".join(context_sections))
 
-    response = robust_invoke(
-        llm,
+    response = invoke_with_fallback(
         [
             SystemMessage(content=with_profile(COMMANDER_COMPOSE_PROMPT)),
             HumanMessage(content=f"User request:\n{user_question}"),
@@ -1167,10 +1674,9 @@ def make_specialist_node(
     max_rounds: int,
     finalizer=None,
 ):
-    bound_llm = llm.bind_tools(tools)
-
     def node(state: AgentState):
         work = state.get("work_messages", [])
+        node_started = time.time()
         if count_tool_rounds(work) >= max_rounds:
             # Research budget spent: force a final written answer from what was
             # gathered (using the plain model so it cannot request more tools),
@@ -1181,7 +1687,7 @@ def make_specialist_node(
                 "only the information already gathered in the messages above."
             )
             try:
-                response = robust_invoke(llm, [SystemMessage(content=finalize_prompt), *work])
+                response = invoke_with_fallback([SystemMessage(content=finalize_prompt), *work])
                 if getattr(response, "tool_calls", None):
                     response = AIMessage(content=build_tool_limit_answer(work, name))
             except Exception as exc:
@@ -1190,9 +1696,12 @@ def make_specialist_node(
                 safe_print(f"\n[TRACE] {name} finalize fell back: {exc}")
                 response = AIMessage(content=build_tool_limit_answer(work, name))
         else:
-            response = robust_invoke(
-                bound_llm,
-                [SystemMessage(content=with_profile(system_prompt)), *work],
+            response = invoke_with_fallback(
+                [
+                    SystemMessage(content=with_profile(system_prompt)),
+                    *compact_tool_history(work),
+                ],
+                tools=tools,
             )
 
         if getattr(response, "tool_calls", None):
@@ -1206,6 +1715,9 @@ def make_specialist_node(
                 built = finalizer(work)
                 if built:
                     response = AIMessage(content=built)
+            trace = observability.current()
+            if trace:
+                trace.agent_event(name, time.time() - node_started, True)
             safe_print(f"\n[TRACE] {name} completed its task.")
 
         return {"work_messages": [response]}
@@ -1217,11 +1729,22 @@ def make_traced_tool_node(name: str, tools: list) -> Callable:
     tool_node = ToolNode(tools, messages_key="work_messages")
 
     def node(state: AgentState):
+        started = time.time()
         result = tool_node.invoke(state)
+        elapsed = time.time() - started
+        # Cap each result before it enters the running history.
+        for message in result["work_messages"]:
+            if len(str(message.content)) > MAX_TOOL_RESULT_CHARS:
+                message.content = _cap_tool_output(str(message.content))
+        trace = observability.current()
         safe_print(f"\n[TRACE] {name} tools executed:")
         for message in result["work_messages"]:
             tool_name = getattr(message, "name", "unknown_tool")
             content = str(message.content)
+            if trace:
+                # ToolNode swallows exceptions into the message text.
+                failed = content.lower().startswith(("error", "tool error"))
+                trace.tool_event(name, tool_name, elapsed, not failed)
             preview = content[:500] + ("..." if len(content) > 500 else "")
             safe_print(f"- {tool_name} returned:\n{preview}")
         return result
@@ -1334,14 +1857,39 @@ def format_for_channel(question: str, answer: str, channel: str) -> tuple[str, s
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _reset_work_messages(state: AgentState, task: str) -> list:
-    """Clear the previous step's scratch messages and seed the new task."""
+def _reset_work_messages(state: AgentState, task: str, step_results: list | None = None) -> list:
+    """Clear the previous step's scratch messages and seed the new task.
+
+    Earlier steps' findings are carried forward as context so a later specialist can
+    build on them instead of starting blind (shared memory across the plan).
+    """
     removals = [
         RemoveMessage(id=m.id)
         for m in state.get("work_messages", [])
         if getattr(m, "id", None) is not None
     ]
-    return [*removals, HumanMessage(content=task)]
+
+    content = task
+    shared = format_shared_context(step_results or [])
+    if shared:
+        content = (
+            f"{task}\n\n"
+            "Findings from earlier agents on this request - build on these, do not "
+            f"repeat their work:\n{shared}"
+        )
+    return [*removals, HumanMessage(content=content)]
+
+
+def format_shared_context(step_results: list, max_chars: int = 3500) -> str:
+    """Condense completed step results into context for the next agent."""
+    if not step_results:
+        return ""
+    blocks = [
+        f"[{entry['agent']}] {entry['result']}"
+        for entry in step_results
+        if entry.get("result")
+    ]
+    return _truncate_for_context("\n\n".join(blocks), max_chars)
 
 
 def last_ai_content(messages: list[BaseMessage]) -> str:
@@ -1517,23 +2065,35 @@ def build_graph():
 app = build_graph()
 
 
-def run_agent(question: str, deliver: bool = True, channel: str | None = None):
-    return app.invoke(
-        {
-            "messages": [("user", question)],
-            "work_messages": [],
-            "plan": [],
-            "step_index": 0,
-            "step_results": [],
-            "awaiting_result": False,
-            "current_agent": "",
-            "delivery_channel": (channel or DEFAULT_DELIVERY_CHANNEL),
-            "auto_deliver": deliver,
-            "email_sent": False,
-            "delivered": False,
-        },
-        config={"recursion_limit": 50},
-    )
+def run_agent(
+    question: str,
+    deliver: bool = True,
+    channel: str | None = None,
+    source: str = "cli",
+):
+    observability.start_run(question, source)
+    try:
+        result = app.invoke(
+            {
+                "messages": [("user", question)],
+                "work_messages": [],
+                "plan": [],
+                "step_index": 0,
+                "step_results": [],
+                "awaiting_result": False,
+                "current_agent": "",
+                "delivery_channel": (channel or DEFAULT_DELIVERY_CHANNEL),
+                "auto_deliver": deliver,
+                "email_sent": False,
+                "delivered": False,
+            },
+            config={"recursion_limit": 50},
+        )
+    except Exception as exc:
+        observability.finish_run(error=str(exc))
+        raise
+    observability.finish_run(answer=str(result["messages"][-1].content))
+    return result
 
 
 def answer_only(question: str, channel: str | None = None) -> str:
@@ -1543,6 +2103,12 @@ def answer_only(question: str, channel: str | None = None) -> str:
     them as a single message.
     """
     result = run_agent(question, deliver=False, channel=channel)
+    return str(result["messages"][-1].content)
+
+
+def run_and_answer(question: str, source: str = "cli", channel: str | None = None) -> str:
+    """answer_only, but tags the trace with where the request came from."""
+    result = run_agent(question, deliver=False, channel=channel, source=source)
     return str(result["messages"][-1].content)
 
 
@@ -1695,9 +2261,12 @@ if __name__ == "__main__":
     parser.add_argument("--no-deliver", action="store_true", help="print instead of delivering")
     parser.add_argument("--test-delivery", action="store_true", help="send a test message and exit")
     parser.add_argument("--check-config", action="store_true", help="validate .env and exit")
+    parser.add_argument("--stats", action="store_true", help="show recent run traces and exit")
     args = parser.parse_args()
 
-    if args.check_config:
+    if args.stats:
+        observability.print_summary()
+    elif args.check_config:
         from src.config_check import report
 
         report(exit_on_error=True)

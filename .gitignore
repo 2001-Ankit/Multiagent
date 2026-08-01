@@ -25,3 +25,5 @@ token.json
 
 # Private user profile (personal info given to the agents)
 /data/profile.md
+# Local run traces and bot logs
+/logs/

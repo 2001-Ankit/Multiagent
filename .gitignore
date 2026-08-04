@@ -27,3 +27,13 @@ token.json
 /data/profile.md
 # Local run traces and bot logs
 /logs/
+
+# Conversation memory (private)
+/data/memory/
+
+# blog-site/ is a SEPARATE repo (github.com/2001-Ankit/agenticblog) with its own
+# Vercel deploy. Never let it be staged here as a nested gitlink.
+/blog-site/
+
+# Generated static output from the old Pages build
+/site/

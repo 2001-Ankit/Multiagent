@@ -89,7 +89,7 @@ from src.travel_agent.tools import (  # noqa: E402
     research_flights,
     research_visa_requirements,
 )
-from src import observability  # noqa: E402
+from src import memory, observability  # noqa: E402
 from src.vision_agent.tools import analyze_chart, describe_image  # noqa: E402
 from src.search_agent.tools import (  # noqa: E402
     extract_url_content,
@@ -112,6 +112,7 @@ class AgentState(MessagesState):
     step_results: list
     awaiting_result: bool
     current_agent: str
+    session_id: str
     delivery_channel: str
     auto_deliver: bool
     email_sent: bool
@@ -245,12 +246,18 @@ USER_PROFILE = _load_user_profile()
 
 
 def _profile_block() -> str:
-    if not USER_PROFILE:
+    parts = []
+    if USER_PROFILE:
+        parts.append(
+            "About the user (personalize your answer to this; do not repeat it back "
+            f"verbatim):\n{USER_PROFILE}"
+        )
+    facts = memory.format_facts()
+    if facts:
+        parts.append(f"Things the user asked you to remember:\n{facts}")
+    if not parts:
         return ""
-    return (
-        "\n\nAbout the user (personalize your answer to this; do not repeat it back "
-        f"verbatim):\n{USER_PROFILE}\n"
-    )
+    return "\n\n" + "\n\n".join(parts) + "\n"
 
 
 def with_profile(prompt: str) -> str:
@@ -694,6 +701,11 @@ Decide HOW MANY agents the request needs, WHICH ones, and HOW they should run.
 Available specialists:
 {catalog}
 - direct: answer from general reasoning, no external research needed.
+
+If earlier conversation is supplied, the request may be a FOLLOW-UP ("tell me more
+about the second one", "compare that to X", "why?"). Resolve every such reference
+using that history and write each step's task so it is fully self-contained - the
+specialist running it will NOT see the conversation.
 
 Be selective. An extra agent is only worth it if it contributes something the others
 genuinely cannot. Rules:
@@ -1293,9 +1305,16 @@ def commander_agent(state: AgentState):
         task = step["task"]
 
         if agent == "direct":
-            response = invoke_with_fallback(
-                [SystemMessage(content=with_profile(DIRECT_ANSWER_PROMPT)), HumanMessage(content=task)],
-            )
+            direct_messages: list[BaseMessage] = [
+                SystemMessage(content=with_profile(DIRECT_ANSWER_PROMPT))
+            ]
+            direct_history = memory.format_history(state.get("session_id", "cli"))
+            if direct_history:
+                direct_messages.append(
+                    HumanMessage(content=f"Earlier in this conversation:\n{direct_history}")
+                )
+            direct_messages.append(HumanMessage(content=task))
+            response = invoke_with_fallback(direct_messages)
             step_results.append(
                 {"agent": "direct", "task": task, "result": str(response.content)}
             )
@@ -1342,10 +1361,18 @@ def build_plan(state: AgentState) -> tuple[list, str, str]:
         max_steps=MAX_PLAN_STEPS,
     )
 
-    try:
-        response = invoke_with_fallback(
-            [SystemMessage(content=with_profile(prompt)), HumanMessage(content=user_question)],
+    # Recent turns go to the planner only: it rewrites follow-ups into
+    # self-contained tasks, so specialists never pay for the history.
+    history = memory.format_history(state.get("session_id", "cli"))
+    planner_messages: list[BaseMessage] = [SystemMessage(content=with_profile(prompt))]
+    if history:
+        planner_messages.append(
+            HumanMessage(content=f"Earlier in this conversation:\n{history}")
         )
+    planner_messages.append(HumanMessage(content=f"New request:\n{user_question}"))
+
+    try:
+        response = invoke_with_fallback(planner_messages)
         plan, channel, mode = parse_plan(str(response.content))
         plan = filter_viable_steps(plan, user_question)
         if plan:
@@ -2070,6 +2097,7 @@ def run_agent(
     deliver: bool = True,
     channel: str | None = None,
     source: str = "cli",
+    session_id: str = "cli",
 ):
     observability.start_run(question, source)
     try:
@@ -2082,6 +2110,7 @@ def run_agent(
                 "step_results": [],
                 "awaiting_result": False,
                 "current_agent": "",
+                "session_id": session_id,
                 "delivery_channel": (channel or DEFAULT_DELIVERY_CHANNEL),
                 "auto_deliver": deliver,
                 "email_sent": False,
@@ -2092,7 +2121,10 @@ def run_agent(
     except Exception as exc:
         observability.finish_run(error=str(exc))
         raise
-    observability.finish_run(answer=str(result["messages"][-1].content))
+
+    final_answer = str(result["messages"][-1].content)
+    observability.finish_run(answer=final_answer)
+    memory.save_turn(session_id, question, final_answer)
     return result
 
 
@@ -2106,9 +2138,20 @@ def answer_only(question: str, channel: str | None = None) -> str:
     return str(result["messages"][-1].content)
 
 
-def run_and_answer(question: str, source: str = "cli", channel: str | None = None) -> str:
-    """answer_only, but tags the trace with where the request came from."""
-    result = run_agent(question, deliver=False, channel=channel, source=source)
+def run_and_answer(
+    question: str,
+    source: str = "cli",
+    channel: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """answer_only, but tags the trace and keeps per-user conversation memory."""
+    result = run_agent(
+        question,
+        deliver=False,
+        channel=channel,
+        source=source,
+        session_id=session_id or source,
+    )
     return str(result["messages"][-1].content)
 
 

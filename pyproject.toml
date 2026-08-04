@@ -13,9 +13,19 @@ dependencies = [
     "langchain",
     "langchain-openai",
     "langgraph",
+    "markdown>=3.10.3",
     "mcp",
     "openai",
     "pdfplumber",
     "python-dotenv",
     "yfinance>=1.5.2",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

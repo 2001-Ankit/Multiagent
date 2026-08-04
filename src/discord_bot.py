@@ -124,7 +124,12 @@ async def scheduler_loop() -> None:
 HELP_TEXT = (
     "I'm your multi-agent assistant. Send a question and I'll route it to the right "
     "specialist.\n\n"
+    "I remember our recent conversation, so follow-ups like "
+    "'tell me more about the second one' work.\n\n"
     "**Commands:** /daily /news /jobs /watch /model /help\n"
+    "**Memory:** /remember <fact> | /memory | /forget\n"
+    "**Content:** /content <topic> - blog + LinkedIn + X thread + video script\n"
+    "**Blog:** /blog <topic> | /drafts | /publish <id> | /discard <id>\n"
     "**Examples:** `scholarships for Nepali students in CS` | "
     "`visa requirements for Germany` | `write a LinkedIn post about my project`"
 )
@@ -214,6 +219,169 @@ async def on_message(message: discord.Message):
         await message.channel.send(f"Brain model: {mw.active_model_info()}")
         return
 
+    if command == "/remember":
+        fact = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+        if not fact.strip():
+            await message.channel.send("Usage: `/remember I hold NABIL shares`")
+        elif mw.memory.add_fact(fact):
+            await message.channel.send(f"Got it, I'll remember: {fact}")
+        else:
+            await message.channel.send("I already knew that.")
+        return
+
+    if command == "/forget":
+        cleared = mw.memory.clear_session(str(message.author.id))
+        await message.channel.send(
+            "Cleared our recent conversation." if cleared else "Nothing to clear."
+        )
+        return
+
+    if command == "/blog":
+        topic = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+        if not topic.strip():
+            await message.channel.send("Usage: `/blog how to start investing in NEPSE`")
+            return
+        await message.channel.send(f"Researching and writing a draft on: {topic}")
+        try:
+            from src.blog.writer import write_draft
+
+            draft = await asyncio.to_thread(write_draft, topic)
+        except Exception as exc:
+            await message.channel.send(f"Could not write the draft: {exc}")
+            return
+        preview = draft.body[:1200] + ("\n\n[...]" if len(draft.body) > 1200 else "")
+        from src.blog import github_pr
+
+        next_step = (
+            "Opening a pull request for review..."
+            if github_pr.is_configured()
+            else f"Publish with `/publish {draft.slug}` or drop it with `/discard {draft.slug}`."
+        )
+        await send_long(
+            message.channel,
+            f"**DRAFT: {draft.title}**\n_id: `{draft.slug}`_\n\n{preview}\n\n{next_step}",
+        )
+
+        if github_pr.is_configured():
+            try:
+                pr = await asyncio.to_thread(
+                    github_pr.open_post_pr,
+                    draft.slug,
+                    draft.title,
+                    draft.body,
+                    draft.description,
+                    draft.tags,
+                )
+                await message.channel.send(
+                    f"Pull request opened: {pr['url']}\nReview the diff and merge to publish."
+                )
+            except Exception as exc:
+                await message.channel.send(f"Could not open the pull request: {exc}")
+        return
+
+    if command == "/content":
+        topic = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+        if not topic.strip():
+            await message.channel.send(
+                "Usage: `/content how students in Nepal can use AI tools`\n"
+                "Produces a blog draft + LinkedIn post + X thread + short video script."
+            )
+            return
+        await message.channel.send(
+            f"Building a full content pack on: {topic}\n"
+            "(researching once, then writing blog + social + script - a few minutes)"
+        )
+        try:
+            from src.content_pipeline import create_content_pack, format_pack
+
+            pack = await asyncio.to_thread(create_content_pack, topic)
+        except Exception as exc:
+            await message.channel.send(f"Content pack failed: {exc}")
+            return
+        await send_long(message.channel, format_pack(pack))
+
+        # If the blog repo is configured, propose it as a PR for review.
+        from src.blog import github_pr
+
+        if github_pr.is_configured():
+            await message.channel.send("Opening a pull request in your blog repo...")
+            try:
+                from src.content_pipeline import open_pr_for_pack
+
+                pr = await asyncio.to_thread(open_pr_for_pack, pack)
+                await message.channel.send(
+                    f"Pull request opened: {pr['url']}\n"
+                    f"Review the diff and merge to publish."
+                )
+            except Exception as exc:
+                await message.channel.send(
+                    f"Could not open the pull request: {exc}\n"
+                    f"The draft is saved locally as `{pack['draft'].slug}`."
+                )
+        return
+
+    if command == "/drafts":
+        from src.blog import store
+
+        drafts = store.list_drafts()
+        published = store.list_published()
+        lines = [f"**Drafts ({len(drafts)})**"]
+        lines += [f"- `{d.slug}` - {d.title}" for d in drafts] or ["- (none)"]
+        lines.append(f"\n**Published ({len(published)})**")
+        lines += [f"- {p.date} {p.title}" for p in published[:10]] or ["- (none)"]
+        await send_long(message.channel, "\n".join(lines))
+        return
+
+    if command == "/publish":
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.channel.send("Usage: `/publish <draft-id>` (see `/drafts`)")
+            return
+        from src.blog import store, sync
+
+        post = await asyncio.to_thread(store.publish, parts[1].strip())
+        if not post:
+            await message.channel.send(f"No draft called `{parts[1].strip()}`.")
+            return
+
+        await message.channel.send(f"Published **{post.title}**. Pushing it live...")
+        try:
+            result = await asyncio.to_thread(sync.sync_and_push, f"post: {post.title}")
+        except sync.SyncError as exc:
+            await message.channel.send(f"Saved, but could not push: {exc}")
+            return
+
+        if result.get("pushed"):
+            await message.channel.send(
+                f"Pushed `{result['commit']}` to `{result['branch']}`. "
+                "Vercel is redeploying - live in about a minute."
+            )
+        else:
+            await message.channel.send(f"Nothing to push: {result['reason']}")
+        return
+
+    if command == "/discard":
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.channel.send("Usage: `/discard <draft-id>`")
+            return
+        from src.blog import store
+
+        ok = store.discard(parts[1].strip())
+        await message.channel.send("Draft discarded." if ok else "No such draft.")
+        return
+
+    if command == "/memory":
+        history = mw.memory.format_history(str(message.author.id))
+        facts = mw.memory.format_facts()
+        parts = []
+        if history:
+            parts.append(f"**Recent conversation**\n{history}")
+        if facts:
+            parts.append(f"**Remembered facts**\n{facts}")
+        await send_long(message.channel, "\n\n".join(parts) or "No memory stored yet.")
+        return
+
     print(f"[discord-bot] <- {text!r}")
 
     if command in BRIEFING_COMMANDS:
@@ -226,7 +394,9 @@ async def on_message(message: discord.Message):
 
     await message.channel.send("On it - working through the agents. This can take a minute...")
     try:
-        answer = await asyncio.to_thread(mw.run_and_answer, text, "discord")
+        answer = await asyncio.to_thread(
+            mw.run_and_answer, text, "discord", None, str(message.author.id)
+        )
     except Exception as exc:
         await message.channel.send(f"Sorry, something went wrong: {exc}")
         return

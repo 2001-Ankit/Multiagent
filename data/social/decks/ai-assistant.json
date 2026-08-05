@@ -1,0 +1,48 @@
+{
+  "title": "AI Assistant",
+  "kicker": "BUILD LOG",
+  "hook": "I hit rate limits and it cost me a day",
+  "subtitle": "Lessons from building a personal multi-agent AI assistant",
+  "slides": [
+    {
+      "heading": "Project Scale",
+      "body": "2,329-line orchestrator, 13 agents, 155 tests"
+    },
+    {
+      "heading": "Latency Issues",
+      "body": "Median response time: 6.7 seconds, p90: 24.0 seconds"
+    },
+    {
+      "heading": "Rate Limit Fix",
+      "body": "Capped tool results, compacted history, limited concurrent agents"
+    },
+    {
+      "heading": "Rate Limit Types",
+      "body": "Per-minute and per-day limits require different handling"
+    },
+    {
+      "heading": "Model Fallback",
+      "body": "Chain of models from different providers for reliability"
+    },
+    {
+      "heading": "Model Choice",
+      "body": "Some models can't handle structured tool calling"
+    },
+    {
+      "heading": "Automation Pitfalls",
+      "body": "Incomplete automation and formatting issues can cause failures"
+    }
+  ],
+  "outro": "Save this for later and swipe back to slide 1",
+  "caption": "Building a personal multi-agent AI assistant was harder than I thought. \nHere are the key lessons I learned. \nFrom rate limits to model fallback, I'm sharing my first-hand experience.",
+  "hashtags": [
+    "#AIAssistant",
+    "#MultiAgentSystem",
+    "#RateLimiting",
+    "#ModelFallback",
+    "#AutomationPitfalls",
+    "#AIDevelopment"
+  ],
+  "slug": "ai-assistant",
+  "handle": "@ankitrai"
+}

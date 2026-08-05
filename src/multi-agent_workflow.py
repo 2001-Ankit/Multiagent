@@ -1052,6 +1052,66 @@ def swarm_budget_available() -> bool:
     return tokens_used_today() < DAILY_TOKEN_BUDGET * SWARM_BUDGET_FRACTION
 
 
+# A fan-out costs roughly three times a solo run, so it is opt-in. The planner
+# asking for "parallel" is a suggestion; these decide whether it actually happens.
+SWARM_OPT_IN_ONLY = os.environ.get("SWARM_OPT_IN_ONLY", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+
+_SWARM_REQUESTED = re.compile(
+    r"\b(swarm|deep[\s-]?dive|in[\s-]?depth|thorough(ly)?|exhaustive|"
+    r"multiple angles|several angles|different angles|every angle|"
+    r"pros and cons|full analysis|comprehensive|weigh up|trade[\s-]?offs)\b",
+    re.IGNORECASE,
+)
+_SWARM_DECLINED = re.compile(
+    r"\b(quick(ly)?|briefly|brief|short answer|just tell me|one[\s-]?liner|"
+    r"tl;?dr|in a sentence|simply put|keep it short)\b",
+    re.IGNORECASE,
+)
+
+
+def swarm_intent(question: str) -> str:
+    """Did the user ask for a swarm, refuse one, or say nothing either way?
+
+    Returns "force", "block" or "auto". An explicit refusal beats an explicit
+    request, because "quick pros and cons" is a request for brevity.
+    """
+    text = question or ""
+    if _SWARM_DECLINED.search(text):
+        return "block"
+    if _SWARM_REQUESTED.search(text):
+        return "force"
+    return "auto"
+
+
+def should_run_swarm(question: str, planner_mode: str, agent_count: int) -> tuple[bool, str]:
+    """Decide whether to actually fan out. Returns (run_swarm, reason).
+
+    The planner is optimistic about parallelism because more perspectives always
+    look better in the abstract. It does not pay the token bill, so the decision
+    lives here instead.
+    """
+    if agent_count < 2:
+        return False, "only one viable agent"
+    intent = swarm_intent(question)
+    if intent == "block":
+        return False, "user asked for a short answer"
+    if intent == "force":
+        if not swarm_budget_available():
+            return False, f"user asked for depth but ~{tokens_used_today():,} tokens used today"
+        return True, "user explicitly asked for a deeper look"
+    if planner_mode != "parallel":
+        return False, "planner chose a single specialist"
+    if SWARM_OPT_IN_ONLY:
+        return False, "swarm is opt-in (set SWARM_OPT_IN_ONLY=0 to let the planner decide)"
+    if not swarm_budget_available():
+        return False, f"~{tokens_used_today():,} tokens used today; preserving quota"
+    return True, "planner asked for multiple perspectives and budget allows"
+
+
 def _cap_tool_output(text: str) -> str:
     if len(text) <= MAX_TOOL_RESULT_CHARS:
         return text
@@ -1256,18 +1316,20 @@ def commander_agent(state: AgentState):
         # Parallel mode: run every specialist at once, then go straight to the
         # aggregator. Nothing to dispatch through the graph one-by-one.
         swarm_steps = [step for step in plan if step["agent"] != "direct"]
-        if mode == "parallel" and len(swarm_steps) > 1 and not swarm_budget_available():
-            # Today's budget is mostly spent: answer with the single best agent
-            # instead of burning what's left on a fan-out.
-            safe_print(
-                f"[BUDGET] ~{tokens_used_today():,} tokens used today; "
-                "running solo instead of a swarm to preserve quota."
-            )
+        question = str(state["messages"][0].content)
+        fan_out, why = should_run_swarm(question, mode, len(swarm_steps))
+
+        if fan_out and mode != "parallel":
+            # The user asked for depth explicitly; honour it over the plan.
+            safe_print(f"[SWARM] Escalating to a swarm: {why}.")
+            mode = "parallel"
+        elif not fan_out and mode == "parallel" and len(swarm_steps) > 1:
+            safe_print(f"[SWARM] Running solo instead of a swarm: {why}.")
             plan = swarm_steps[:1]
             mode = "solo"
             swarm_steps = plan
 
-        if mode == "parallel" and len(swarm_steps) > 1:
+        if fan_out and len(swarm_steps) > 1:
             step_results = run_swarm(swarm_steps)
             final_answer = compose_final_answer(state, step_results)
             safe_print("[TRACE] Commander aggregated the swarm results.")

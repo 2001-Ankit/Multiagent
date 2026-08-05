@@ -37,3 +37,6 @@ token.json
 
 # Generated static output from the old Pages build
 /site/
+
+# Rendered slide images - regenerate from the deck JSON with render_slides
+/data/social/slides/

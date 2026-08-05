@@ -89,7 +89,9 @@ def _extract_json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if not match:
         raise ValueError("repurposing response contained no JSON")
-    return json.loads(match.group(0))
+    # strict=False tolerates literal newlines inside strings, which models emit
+    # routinely in multi-line values rather than escaping them to \n.
+    return json.loads(match.group(0), strict=False)
 
 
 def _format_script(script: dict) -> str:
@@ -113,12 +115,43 @@ def _format_script(script: dict) -> str:
     return "\n".join(lines).strip()
 
 
-def create_content_pack(topic: str, words: int = 650, tags: str = "") -> dict:
-    """Research once, then produce a blog draft plus social and video variants."""
+def _merge_evidence(evidence: str, research: str) -> str:
+    """Put first-hand evidence ahead of web findings, and label it as citable.
+
+    The blog prompt forbids inventing facts, which is right for a researched
+    piece but wrong for writing about your own project: the numbers live in this
+    repo and its logs, not on the web. Passing them as evidence makes them
+    usable without loosening the guardrail.
+    """
+    if not evidence.strip():
+        return research
+    return (
+        "FIRST-HAND EVIDENCE from my own project. This is authoritative and "
+        "specific - build the post around it, quote the numbers exactly, and "
+        "attribute it to my own experience rather than to a URL.\n"
+        f"{evidence.strip()}\n\n"
+        "BACKGROUND WEB RESEARCH - for orientation only. Do NOT cite these URLs "
+        "unless you actually took a specific claim from one. A post built on "
+        "first-hand evidence should have few sources or none at all; padding the "
+        "Sources list with links you did not use is fabricated attribution and is "
+        "worse than having no Sources section. If you used none, omit the section "
+        "entirely.\n"
+        f"{research}"
+    )
+
+
+def create_content_pack(
+    topic: str, words: int = 650, tags: str = "", evidence: str = ""
+) -> dict:
+    """Research once, then produce a blog draft plus social and video variants.
+
+    `evidence` is optional first-hand material (your own metrics, logs, code)
+    that outranks web research. Use it for build-in-public posts.
+    """
     workflow = _workflow()
     topic = topic.strip()
 
-    research = _research(topic)
+    research = _merge_evidence(evidence, _research(topic))
 
     blog_raw = workflow.invoke_with_fallback(
         [

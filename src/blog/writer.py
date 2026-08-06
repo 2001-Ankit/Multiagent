@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 
+from src.blog.github_pr import infer_tags
 from src.blog.store import Post, create_draft
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -72,11 +73,15 @@ def write_draft(topic: str, words: int = 700, tags: str = "") -> Post:
         BRIEF.format(topic=topic.strip(), words=words), source="blog", session_id="blog"
     )
     title, body = _split_title(answer)
+    # Callers rarely pass tags (Discord's /blog never does), and an untagged post
+    # renders as "Notes" on the site. Infer them from the post's own words.
+    if not tags.strip():
+        tags = ",".join(infer_tags(topic, title, body))
     return create_draft(
         title=title,
         body=body,
         description=_description(body),
-        tags=tags or "",
+        tags=tags,
     )
 
 

@@ -1,0 +1,51 @@
+{
+  "title": "What broke running agents on free-tier quotas",
+  "kicker": "BUILD LOG",
+  "hook": "I treated every 429 the same and it cost me a day",
+  "subtitle": "Lessons learned from building a personal multi-agent AI assistant",
+  "slides": [
+    {
+      "heading": "The swarm ate my whole quota",
+      "body": "70,000 tokens triggered rate limits almost immediately",
+      "code": "concurrent_agents = 3\ntool_result_max_length = 1500"
+    },
+    {
+      "heading": "Not all 429s are equal",
+      "body": "Per-minute limit: back off and retry, per-day limit: do not retry",
+      "code": "if 429 == TPM: retry\nelif 429 == TPD: do not retry"
+    },
+    {
+      "heading": "A colon broke the build",
+      "body": "Unquoted colons in YAML frontmatter caused errors",
+      "code": "generated_string = '\"' + generated_string + '\"'"
+    },
+    {
+      "heading": "Latency was 8x over budget",
+      "body": "Median response time: 6.7 seconds, p90: 24.0 seconds"
+    },
+    {
+      "heading": "Model fallback across providers",
+      "body": "Chain consists of 4 models from different providers",
+      "code": "models = [\"llama-3.3-70b-versatile\", \"llama-3.1-8b-instant\", \"openai/gpt-oss-120b\", \"nvidia/llama-3.3-nemotron-super-49b-v1.5\"]"
+    },
+    {
+      "heading": "One model could not call tools",
+      "body": "gpt-oss-20b produced output_parse_failed and tool_use_failed errors"
+    },
+    {
+      "heading": "Two repos, one mistake",
+      "body": "Automation stopped one step short of being useful"
+    }
+  ],
+  "outro": "Save this for later and swipe back to slide 1",
+  "caption": "Building a personal multi-agent AI assistant on free-tier quotas? I learned some hard lessons. \nHere are the top takeaways. \nDon't make the same mistakes I did!",
+  "hashtags": [
+    "#AIassistant",
+    "#FreeTierQuotas",
+    "#RateLimiting",
+    "#ModelFallback",
+    "#LatencyOptimization"
+  ],
+  "slug": "what-broke-running-agents-on-free-tier-quotas",
+  "handle": "@ankitrai"
+}

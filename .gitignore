@@ -40,3 +40,6 @@ token.json
 
 # Rendered slide images - regenerate from the deck JSON with render_slides
 /data/social/slides/
+
+# Uploaded scene media (build inputs, regenerate or re-upload as needed)
+/data/social/scenes/

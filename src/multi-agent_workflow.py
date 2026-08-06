@@ -857,6 +857,21 @@ def _build_llm_chain() -> list[dict]:
                 "client": None,
             }
         )
+
+    # Google, via its OpenAI-compatible endpoint, so no new client type is needed.
+    # A third provider is a third independent quota pool: when Groq's daily limit
+    # is gone, every Groq model is gone with it.
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    gemini_model = os.environ.get("LLM_FALLBACK_GEMINI_MODEL", "gemini-2.5-flash").strip()
+    if gemini_key and gemini_model and "googleapis" not in LLM_BASE_URL:
+        chain.append(
+            {
+                "model": gemini_model,
+                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                "api_key": gemini_key,
+                "client": None,
+            }
+        )
     return chain
 
 
@@ -880,6 +895,9 @@ def _provider_name(base_url: str) -> str:
         return "Groq"
     if "nvidia" in base_url:
         return "NVIDIA"
+    # Must precede the OpenAI check: Google's compatible endpoint ends in /openai/.
+    if "googleapis" in base_url:
+        return "Google"
     if "openai" in base_url:
         return "OpenAI"
     return base_url

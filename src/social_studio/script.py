@@ -16,7 +16,14 @@ from langchain_openai import ChatOpenAI
 
 load_dotenv(override=True)
 
-_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("GROQ_MODEL") or "openai/gpt-oss-20b"
+# gpt-oss-20b was the old default and is unreliable at structured output - it was
+# the source of the output_parse_failed / tool_use_failed errors. This module asks
+# for strict JSON, so it needs a model that can actually produce it.
+_MODEL = (
+    os.environ.get("LLM_MODEL")
+    or os.environ.get("GROQ_MODEL")
+    or "llama-3.3-70b-versatile"
+)
 _BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1")
 _API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY")
 

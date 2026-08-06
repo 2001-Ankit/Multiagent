@@ -54,6 +54,31 @@ def _normalise_date(value: str) -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def find_media(slug: str) -> dict:
+    """Look for a hand-made cover or loop for this post in the site's public/ dir.
+
+    Assets are dropped in by hand (generated in the Gemini app), so this checks
+    the filesystem rather than expecting the post to declare them. Paths returned
+    are site-absolute, which is what Astro and social link previews both need.
+    """
+    try:
+        public = site_dir() / "public"
+    except SyncError:
+        return {}
+
+    media = {}
+    for key, folder, suffixes in (
+        ("video", "video", (".mp4",)),
+        ("cover", "covers", (".png", ".jpg", ".jpeg", ".webp")),
+    ):
+        for suffix in suffixes:
+            candidate = public / folder / f"{slug}{suffix}"
+            if candidate.exists():
+                media[key] = f"/{folder}/{slug}{suffix}"
+                break
+    return media
+
+
 def to_astro_markdown(post: Post) -> str:
     """Convert one stored post into the frontmatter shape the Astro schema expects.
 
@@ -63,18 +88,22 @@ def to_astro_markdown(post: Post) -> str:
     """
     category, color = category_for(post.tags)
     published = post.meta.get("published") or post.date
-    frontmatter = (
-        "---\n"
-        f"title: {json.dumps(post.title)}\n"
-        f"description: {json.dumps(post.description)}\n"
-        f"pubDate: {_normalise_date(published)}\n"
-        f"tags: [{', '.join(json.dumps(t) for t in post.tags)}]\n"
-        f"category: {json.dumps(category)}\n"
-        f"categoryColor: {json.dumps(color)}\n"
-        f"draft: {'false' if post.is_published else 'true'}\n"
-        "---\n\n"
-    )
-    return frontmatter + post.body.strip() + "\n"
+    lines = [
+        "---",
+        f"title: {json.dumps(post.title)}",
+        f"description: {json.dumps(post.description)}",
+        f"pubDate: {_normalise_date(published)}",
+        f"tags: [{', '.join(json.dumps(t) for t in post.tags)}]",
+        f"category: {json.dumps(category)}",
+        f"categoryColor: {json.dumps(color)}",
+        f"draft: {'false' if post.is_published else 'true'}",
+    ]
+    # Only emit these when a real file exists: a cover pointing at a missing image
+    # renders a broken box, which is worse than the generated placeholder.
+    for key, value in find_media(post.slug).items():
+        lines.append(f"{key}: {json.dumps(value)}")
+    lines.extend(["---", ""])
+    return "\n".join(lines) + "\n" + post.body.strip() + "\n"
 
 
 def sync() -> dict:

@@ -111,6 +111,38 @@ CATEGORY_COLORS = {
 DEFAULT_CATEGORY_COLOR = "#2c4c34"
 
 
+# Keywords that map a post to one of the categories above. Deterministic and
+# free: the writer labels its own output with this instead of spending an LLM
+# call on it. Without this every generated post arrived untagged and fell through
+# to the "Notes" default, so the whole site looked like one category.
+TAG_KEYWORDS = {
+    "ai": ("ai", "llm", "gpt", "agent", "machine learning", "neural", "model",
+           "rag", "prompt", "openai", "claude", "gemini"),
+    "dev": ("python", "javascript", "typescript", "programming", "developer",
+            "code", "api", "git", "debug", "refactor"),
+    "web": ("react", "astro", "css", "html", "frontend", "browser", "website",
+            "vercel", "next.js"),
+    "data": ("database", "sql", "postgres", "dataset", "analytics", "pipeline",
+             "warehouse"),
+    "security": ("security", "auth", "vulnerab", "encrypt", "credential",
+                 "password", "breach"),
+    "startups": ("startup", "founder", "funding", "saas", "bootstrap"),
+    "tools": ("tool", "workflow", "automation", "productivity", "cli"),
+    "trends": ("trend", "future", "emerging", "what's next", "2026", "2027"),
+}
+
+
+def infer_tags(*texts: str, limit: int = 3) -> list[str]:
+    """Guess tags from a post's own words. Never returns an empty list."""
+    blob = " ".join(t for t in texts if t).lower()
+    scored = [
+        (sum(blob.count(word) for word in words), tag)
+        for tag, words in TAG_KEYWORDS.items()
+    ]
+    ranked = sorted(((hits, tag) for hits, tag in scored if hits), reverse=True)
+    return [tag for _, tag in ranked[:limit]] or ["tech"]
+
+
 def category_for(tags: list[str]) -> tuple[str, str]:
     """Pick a display category and its badge colour from a post's tags."""
     for tag in tags:

@@ -136,7 +136,7 @@ def _rule_block(draw, x, width=108, height=4, pad=30):
     return {"h": pad + height, "paint": paint}
 
 
-def _stack(blocks, top: int, bottom: int, bias: float = 0.42) -> None:
+def _stack(blocks, top: int, bottom: int, bias: float = 0.5) -> None:
     """Centre a group of blocks in the space between the header and the footer.
 
     Bias sits slightly above true centre: optical centre reads better than
@@ -148,8 +148,30 @@ def _stack(blocks, top: int, bottom: int, bias: float = 0.42) -> None:
         y = block["paint"](y)
 
 
-def _base(width: int, height: int) -> Image.Image:
+def _fit_cover(image: Image.Image, width: int, height: int) -> Image.Image:
+    """Scale and centre-crop to fill the canvas without distorting the image."""
+    scale = max(width / image.width, height / image.height)
+    resized = image.resize((round(image.width * scale), round(image.height * scale)))
+    left = (resized.width - width) // 2
+    top = (resized.height - height) // 2
+    return resized.crop((left, top, left + width, top + height))
+
+
+def _with_background(width: int, height: int, background) -> Image.Image:
+    """Use a generated image as the slide background, darkened for legibility.
+
+    Generated art is mid-tone and busy; body copy over it is unreadable. The
+    scrim is what makes the text survive, so it is not optional styling.
+    """
+    image = _fit_cover(Image.open(background).convert("RGB"), width, height)
+    scrim = Image.new("RGB", (width, height), THEME["bg"])
+    return Image.blend(image, scrim, float(os.environ.get("SLIDE_SCRIM", "0.62")))
+
+
+def _base(width: int, height: int, background=None) -> Image.Image:
     """Solid background plus a soft accent bloom in the top-right."""
+    if background:
+        return _with_background(width, height, background)
     image = Image.new("RGB", (width, height), THEME["bg"])
     bloom = Image.new("RGB", (width, height), THEME["bg"])
     glow = ImageDraw.Draw(bloom)
@@ -182,10 +204,10 @@ def _footer(draw, width, height, margin, index, total, handle):
     )
 
 
-def render_cover(deck: dict, size: str, index: int, total: int) -> Image.Image:
+def render_cover(deck: dict, size: str, index: int, total: int, background=None) -> Image.Image:
     width, height = SIZES[size]
     margin = int(width * 0.082)
-    image = _base(width, height)
+    image = _base(width, height, background)
     draw = ImageDraw.Draw(image)
     inner = width - margin * 2
 
@@ -232,10 +254,10 @@ def render_cover(deck: dict, size: str, index: int, total: int) -> Image.Image:
     return image
 
 
-def render_slide(slide: dict, deck: dict, size: str, index: int, total: int) -> Image.Image:
+def render_slide(slide: dict, deck: dict, size: str, index: int, total: int, background=None) -> Image.Image:
     width, height = SIZES[size]
     margin = int(width * 0.082)
-    image = _base(width, height)
+    image = _base(width, height, background)
     draw = ImageDraw.Draw(image)
     inner = width - margin * 2
 
@@ -326,8 +348,17 @@ def render_outro(deck: dict, size: str, index: int, total: int) -> Image.Image:
     return image
 
 
-def render_deck(deck: dict, out_dir: Path | str | None = None, size: str = "portrait") -> dict:
-    """Render cover + slides + outro to a numbered PNG sequence."""
+def render_deck(
+    deck: dict,
+    out_dir: Path | str | None = None,
+    size: str = "portrait",
+    backgrounds: dict | None = None,
+) -> dict:
+    """Render cover + slides + outro to a numbered PNG sequence.
+
+    `backgrounds` maps a 1-based scene number to an image path, so hand-generated
+    art can sit behind the text.
+    """
     if size not in SIZES:
         raise RenderError(f"unknown size {size!r}; choose from {', '.join(SIZES)}")
     slides = deck.get("slides") or []
@@ -338,10 +369,13 @@ def render_deck(deck: dict, out_dir: Path | str | None = None, size: str = "port
     directory = Path(out_dir) if out_dir else OUTPUT_ROOT / slug
     directory.mkdir(parents=True, exist_ok=True)
 
+    backgrounds = backgrounds or {}
     total = len(slides) + 2  # cover and outro
-    pages = [render_cover(deck, size, 1, total)]
+    pages = [render_cover(deck, size, 1, total, backgrounds.get(1))]
     for offset, slide in enumerate(slides, start=2):
-        pages.append(render_slide(slide, deck, size, offset, total))
+        # Scene numbers are 1-based over the content slides, so slide N sits at
+        # page N+1: the cover is page 1.
+        pages.append(render_slide(slide, deck, size, offset, total, backgrounds.get(offset - 1)))
     pages.append(render_outro(deck, size, total, total))
 
     written = []

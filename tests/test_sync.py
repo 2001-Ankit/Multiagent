@@ -151,3 +151,46 @@ class TestPush:
         result = sync.push()
         assert result["pushed"] is True
         assert messages == ["post: a slug"]
+
+
+class TestMediaPickup:
+    """Covers and loops are made by hand, so sync finds them on disk."""
+
+    @pytest.fixture
+    def site(self, tmp_path, monkeypatch):
+        (tmp_path / ".git").mkdir()
+        monkeypatch.setenv("BLOG_SITE_DIR", str(tmp_path))
+        return tmp_path
+
+    def _drop(self, site, folder, name):
+        target = site / "public" / folder / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"x")
+
+    def test_no_media_means_no_keys(self, site):
+        assert sync.find_media("a-slug") == {}
+
+    def test_cover_is_found(self, site):
+        self._drop(site, "covers", "a-slug.png")
+        assert sync.find_media("a-slug") == {"cover": "/covers/a-slug.png"}
+
+    def test_video_wins_over_cover(self, site):
+        # PostMedia.astro prefers video, so both may exist; both get emitted.
+        self._drop(site, "covers", "a-slug.png")
+        self._drop(site, "video", "a-slug.mp4")
+        media = sync.find_media("a-slug")
+        assert media["video"] == "/video/a-slug.mp4"
+        assert media["cover"] == "/covers/a-slug.png"
+
+    def test_other_slugs_are_not_picked_up(self, site):
+        self._drop(site, "covers", "different-post.png")
+        assert sync.find_media("a-slug") == {}
+
+    def test_cover_reaches_the_frontmatter(self, site, monkeypatch):
+        self._drop(site, "covers", "a-slug.png")
+        text = sync.to_astro_markdown(make_post("Hello"))
+        assert frontmatter(text)["cover"] == "/covers/a-slug.png"
+
+    def test_frontmatter_stays_valid_without_media(self, site):
+        data = frontmatter(sync.to_astro_markdown(make_post("Hello")))
+        assert "cover" not in data and data["title"] == "Hello"

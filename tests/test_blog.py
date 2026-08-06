@@ -177,3 +177,41 @@ class TestWriterHelpers:
 
         desc = _description("## Heading\n\n- a list item\n\nThe real first paragraph.")
         assert desc == "The real first paragraph."
+
+
+class TestTagInference:
+    """Untagged posts used to fall through to "Notes", flattening the whole site."""
+
+    def test_ai_post_is_tagged_ai(self):
+        from src.blog.github_pr import infer_tags
+
+        assert "ai" in infer_tags("How LLM agents use RAG and prompt design")
+
+    def test_web_post_is_tagged_web(self):
+        from src.blog.github_pr import infer_tags
+
+        assert "web" in infer_tags("Deploying an Astro site with React on Vercel")
+
+    def test_unmatched_topic_still_gets_a_tag(self):
+        from src.blog.github_pr import infer_tags
+
+        assert infer_tags("a quiet walk by the river") == ["tech"]
+
+    def test_tags_are_capped(self):
+        from src.blog.github_pr import infer_tags
+
+        text = "ai llm python react database security startup tool trend"
+        assert len(infer_tags(text)) <= 3
+
+    def test_strongest_signal_ranks_first(self):
+        from src.blog.github_pr import infer_tags
+
+        tags = infer_tags("ai ai ai ai llm model agent", "a react note")
+        assert tags[0] == "ai"
+
+    def test_inferred_tags_produce_a_real_category(self):
+        from src.blog.github_pr import category_for, infer_tags
+
+        category, color = category_for(infer_tags("building LLM agents"))
+        assert category == "Ai"
+        assert color != "#2c4c34"  # not the Notes fallback

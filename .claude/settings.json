@@ -1,4 +1,17 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git -C blog-site status --short)",
+      "Bash(git -C blog-site log --oneline -1)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run pytest tests/test_gemini_cli.py -q)",
+      "mcp__claude_ai_Viewmax__generate_image",
+      "mcp__claude_ai_Higgsfield__balance",
+      "mcp__claude_ai_Higgsfield__generate_image",
+      "Bash(timeout 60 gemini --help)",
+      "mcp__claude_ai_Higgsfield__job_status",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -c ' *)"
+    ]
+  },
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,

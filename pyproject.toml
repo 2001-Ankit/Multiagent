@@ -10,6 +10,7 @@ dependencies = [
     "google-api-python-client",
     "google-auth-httplib2",
     "google-auth-oauthlib",
+    "imageio-ffmpeg>=0.6.0",
     "langchain",
     "langchain-openai",
     "langgraph",

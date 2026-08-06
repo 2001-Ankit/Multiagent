@@ -27,10 +27,22 @@ specifics over generalities, and no filler. The reader is swiping on a phone.
 
 Rules:
 - 6 to 8 content slides. No more - people stop swiping.
-- heading: at most 6 words. It is the whole point of the slide.
-- body: 1 to 2 short sentences, under 220 characters. Plain language.
-- code: OPTIONAL, at most 4 short lines. Only when it genuinely teaches something.
-  Omit the key entirely when it does not.
+- heading: at most 7 words, and it MUST be a claim, a finding or a comparison.
+  It is the largest text on the slide and many people read only the headings, so
+  it has to carry the insight by itself. Never a category label or bare noun
+  phrase - if it would work as a folder name, rewrite it.
+    good: "Not all 429s are equal"
+    good: "The swarm ate my whole quota"
+    good: "A colon broke the build"
+    bad:  "Rate Limit Types"        (label, says nothing)
+    bad:  "Latency Issues"          (label)
+    bad:  "Project Scale"           (label)
+- body: 1 to 2 short sentences, under 220 characters. Put the numbers here.
+- code: at most 4 short lines. Include it whenever a config value, an error or a
+  snippet makes the point sharper than prose would - roughly a third of slides
+  benefit. Omit the key entirely when it does not.
+- title: specific and searchable. "What broke running agents on free-tier quotas",
+  never a generic noun phrase like "AI Assistant".
 - hook: the cover line. Make a specific claim or set up a comparison. Never a
   vague question. "I treated every 429 the same and it cost me a day" beats
   "Are you handling rate limits correctly?"
@@ -95,18 +107,29 @@ def _clean(deck: dict, source_title: str) -> dict:
 
 
 def _invoke(messages):
-    """Use the main workflow's fallback chain so quota limits do not kill a run."""
+    """Generate, preferring the Gemini CLI when it is enabled.
+
+    Deck writing is pure text with no tool calls, so it can run on a Google
+    account via the CLI - which leaves the primary provider's daily quota for the
+    specialist agents, which cannot use the CLI at all.
+    """
     import importlib.util
     import sys
 
+    from src import gemini_cli
+
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
-    spec = importlib.util.spec_from_file_location(
-        "multi_agent_workflow", PROJECT_ROOT / "src" / "multi-agent_workflow.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.invoke_with_fallback(messages)
+
+    def chain(msgs):
+        spec = importlib.util.spec_from_file_location(
+            "multi_agent_workflow", PROJECT_ROOT / "src" / "multi-agent_workflow.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.invoke_with_fallback(msgs)
+
+    return gemini_cli.invoke_with_fallback(messages, chain)
 
 
 def deck_from_text(source: str, title: str = "", extra: str = "") -> dict:

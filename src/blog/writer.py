@@ -1,6 +1,7 @@
 """Turn a topic into a reviewable blog draft using the ghostwriter agent."""
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -83,7 +84,35 @@ def _description(body: str, limit: int = 200) -> str:
     return ""
 
 
-def write_draft(topic: str, words: int = 700, tags: str = "") -> Post:
+def auto_cover_enabled() -> bool:
+    return os.environ.get("BLOG_AUTO_COVER", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def generate_cover(post: Post) -> Path | None:
+    """Make a cover for a draft. Returns the path, or None if it could not.
+
+    Named after the draft's slug, which is what `sync.find_media` looks for, so
+    publishing wires it into the frontmatter with no further step.
+
+    Never fatal: an image is a nice-to-have, and losing a written post because
+    an image quota ran out would be a bad trade.
+    """
+    if not auto_cover_enabled():
+        return None
+    try:
+        from src.media_router import MediaError, cover_for_post
+
+        return cover_for_post(post.slug, post.title)
+    except MediaError as exc:
+        print(f"[blog] no cover generated: {exc}")
+    except Exception as exc:  # a broken image path must not lose the draft
+        print(f"[blog] cover generation failed: {exc}")
+    return None
+
+
+def write_draft(
+    topic: str, words: int = 700, tags: str = "", with_cover: bool | None = None
+) -> Post:
     """Research and write a post, saved as a draft awaiting review."""
     workflow = _workflow()
     answer = workflow.run_and_answer(
@@ -94,12 +123,17 @@ def write_draft(topic: str, words: int = 700, tags: str = "") -> Post:
     # renders as "Notes" on the site. Infer them from the post's own words.
     if not tags.strip():
         tags = ",".join(infer_tags(topic, title, body))
-    return create_draft(
+    draft = create_draft(
         title=title,
         body=body,
         description=_description(body),
         tags=tags,
     )
+    if with_cover is None:
+        with_cover = auto_cover_enabled()
+    if with_cover:
+        generate_cover(draft)
+    return draft
 
 
 if __name__ == "__main__":

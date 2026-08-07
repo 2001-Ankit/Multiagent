@@ -365,7 +365,9 @@ async def on_message(message: discord.Message):
         if not topic.strip():
             await message.channel.send("Usage: `/blog how to start investing in NEPSE`")
             return
-        await message.channel.send(f"Researching and writing a draft on: {topic}")
+        await message.channel.send(
+            f"Researching and writing a draft on: {topic}\n(and generating a cover)"
+        )
         try:
             from src.blog.writer import write_draft
 
@@ -373,6 +375,19 @@ async def on_message(message: discord.Message):
         except Exception as exc:
             await message.channel.send(f"Could not write the draft: {exc}")
             return
+
+        # The cover is written into the site's public/ dir under the draft slug,
+        # so publishing picks it up with no extra step. Show it now so it can be
+        # judged alongside the text rather than after it is live.
+        cover = None
+        try:
+            from src.blog.sync import site_dir
+
+            matches = list((site_dir() / "public" / "covers").glob(f"{draft.slug}.*"))
+            cover = matches[0] if matches else None
+        except Exception:
+            pass
+
         preview = draft.body[:1200] + ("\n\n[...]" if len(draft.body) > 1200 else "")
         from src.blog import github_pr
 
@@ -381,10 +396,17 @@ async def on_message(message: discord.Message):
             if github_pr.is_configured()
             else f"Publish with `/publish {draft.slug}` or drop it with `/discard {draft.slug}`."
         )
+        cover_note = "cover attached" if cover else "no cover (generation unavailable)"
         await send_long(
             message.channel,
-            f"**DRAFT: {draft.title}**\n_id: `{draft.slug}`_\n\n{preview}\n\n{next_step}",
+            f"**DRAFT: {draft.title}**\n_id: `{draft.slug}` - tags: {', '.join(draft.tags) or 'none'} - {cover_note}_"
+            f"\n\n{preview}\n\n{next_step}",
         )
+        if cover:
+            try:
+                await message.channel.send(file=discord.File(str(cover)))
+            except Exception as exc:
+                await message.channel.send(f"(Cover saved but too large to attach: {exc})")
 
         if github_pr.is_configured():
             try:

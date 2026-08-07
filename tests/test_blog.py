@@ -249,3 +249,42 @@ class TestDescription:
 
         out = _description("word " * 200)
         assert out.endswith("...") and " wor..." not in out
+
+
+class TestAutoCover:
+    """A cover is generated with the draft and picked up at publish by slug."""
+
+    def test_cover_is_named_after_the_slug(self, blog, monkeypatch):
+        from src.blog import writer
+
+        seen = {}
+        monkeypatch.setattr(
+            "src.media_router.cover_for_post",
+            lambda slug, title: seen.update(slug=slug, title=title) or "path.png",
+        )
+        post = blog.create_draft("A Post Title", "Body.", "", "ai")
+        writer.generate_cover(post)
+        # sync.find_media() matches on slug, so this is what wires it in.
+        assert seen["slug"] == post.slug
+
+    def test_disabled_by_env(self, blog, monkeypatch):
+        from src.blog import writer
+
+        monkeypatch.setenv("BLOG_AUTO_COVER", "0")
+        called = []
+        monkeypatch.setattr(
+            "src.media_router.cover_for_post", lambda *a: called.append(1)
+        )
+        assert writer.generate_cover(blog.create_draft("T", "B")) is None
+        assert not called
+
+    def test_generation_failure_never_loses_the_draft(self, blog, monkeypatch):
+        """An image quota running out must not cost a written post."""
+        from src.blog import writer
+        from src.media_router import MediaError
+
+        def boom(*_a):
+            raise MediaError("quota exhausted")
+
+        monkeypatch.setattr("src.media_router.cover_for_post", boom)
+        assert writer.generate_cover(blog.create_draft("T", "B")) is None

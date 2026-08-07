@@ -128,8 +128,15 @@ def generate_image(prompt: str, out_path: str | Path, aspect_ratio: str = "16:9"
         )
 
     payload = {
-        "contents": [{"parts": [{"text": f"{prompt}\n\nAspect ratio: {aspect_ratio}."}]}],
-        "generationConfig": {"responseModalities": ["IMAGE"]},
+        # Vertex rejects a content block with no role; AI Studio defaults it.
+        # Sending it explicitly keeps one payload valid on both.
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        # Aspect ratio must be a config field. Asking for it in the prompt text is
+        # ignored and you get a square image, which crops badly as an OG preview.
+        "generationConfig": {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {"aspectRatio": aspect_ratio},
+        },
     }
 
     if provider == "vertex":

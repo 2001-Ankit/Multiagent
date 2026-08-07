@@ -11,7 +11,10 @@
       "mcp__claude_ai_Higgsfield__job_status",
       "Bash(PYTHONIOENCODING=utf-8 uv run python -c ' *)",
       "Bash(rm -f assets/fonts/*.ttf)",
-      "Bash(bash -n deploy/gcp/setup.sh)"
+      "Bash(bash -n deploy/gcp/setup.sh)",
+      "Bash(gcloud projects *)",
+      "Bash(gcloud config *)",
+      "Bash(GOOGLE_CLOUD_PROJECT=ankit-agent-001 PYTHONIOENCODING=utf-8 timeout 180 uv run python -c ' *)"
     ]
   },
   "enabledPlugins": {

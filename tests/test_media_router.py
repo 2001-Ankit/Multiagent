@@ -133,3 +133,29 @@ class TestVertexFallback:
         monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
         with pytest.raises(media_router.MediaError, match="Vertex"):
             media_router.generate_image("x", tmp_path / "c.png")
+
+
+class TestAspectRatio:
+    def test_aspect_is_sent_as_config_not_prose(self, keyed, monkeypatch, tmp_path):
+        """Asking in the prompt text is ignored and yields a square image."""
+        seen = {}
+
+        def capture(url, payload, **kwargs):
+            seen["payload"] = payload
+            return response_with_image()
+
+        monkeypatch.setattr(media_router, "_post", capture)
+        media_router.generate_image("lines", tmp_path / "c.png", aspect_ratio="16:9")
+        config = seen["payload"]["generationConfig"]
+        assert config["imageConfig"]["aspectRatio"] == "16:9"
+        assert "16:9" not in seen["payload"]["contents"][0]["parts"][0]["text"]
+
+    def test_content_carries_an_explicit_role(self, keyed, monkeypatch, tmp_path):
+        # Vertex rejects a content block without one.
+        seen = {}
+        monkeypatch.setattr(
+            media_router, "_post",
+            lambda url, payload, **k: (seen.update(payload), response_with_image())[1],
+        )
+        media_router.generate_image("x", tmp_path / "c.png")
+        assert seen["contents"][0]["role"] == "user"

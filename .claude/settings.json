@@ -14,7 +14,9 @@
       "Bash(bash -n deploy/gcp/setup.sh)",
       "Bash(gcloud projects *)",
       "Bash(gcloud config *)",
-      "Bash(GOOGLE_CLOUD_PROJECT=ankit-agent-001 PYTHONIOENCODING=utf-8 timeout 180 uv run python -c ' *)"
+      "Bash(GOOGLE_CLOUD_PROJECT=ankit-agent-001 PYTHONIOENCODING=utf-8 timeout 180 uv run python -c ' *)",
+      "Bash(curl -s -o /dev/null -w \"Multiagent: %{http_code}\\\\n\" https://github.com/2001-Ankit/Multiagent)",
+      "Bash(curl -s -o /dev/null -w \"agenticblog: %{http_code}\\\\n\" https://github.com/2001-Ankit/agenticblog)"
     ]
   },
   "enabledPlugins": {

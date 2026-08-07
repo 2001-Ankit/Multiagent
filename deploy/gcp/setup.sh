@@ -56,10 +56,19 @@ else
 fi
 
 say "Blog site (publishing target)"
+# The site repo is usually private, and a credential prompt would hang a
+# non-interactive run forever. Fail fast and carry on: everything except
+# publishing still works, and the clone can be done by hand afterwards.
+export GIT_TERMINAL_PROMPT=0
 if [ -d "$SITE_DIR/.git" ]; then
-  git -C "$SITE_DIR" pull --ff-only
+  git -C "$SITE_DIR" pull --ff-only || echo "  (pull failed - check credentials)"
+elif git clone "$SITE_URL" "$SITE_DIR" 2>/dev/null; then
+  echo "  cloned"
 else
-  git clone "$SITE_URL" "$SITE_DIR"
+  echo "  SKIPPED: $SITE_URL needs credentials."
+  echo "  Clone it by hand once a PAT is configured:"
+  echo "    git clone $SITE_URL $SITE_DIR"
+  echo "  Publishing stays disabled until then; everything else works."
 fi
 
 say "Python dependencies"

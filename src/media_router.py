@@ -29,16 +29,60 @@ class MediaError(RuntimeError):
     pass
 
 
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
+VERTEX_IMAGE_MODEL = os.environ.get("VERTEX_IMAGE_MODEL", IMAGE_MODEL)
+
+
+def _vertex_project() -> str:
+    return os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+
+
 def image_provider() -> str:
-    """Which provider would handle an image request right now."""
-    return "gemini" if os.environ.get("GEMINI_API_KEY", "").strip() else "none"
+    """Which provider would handle an image request right now.
+
+    Vertex is checked second but matters more for managed Google accounts: a
+    Workspace admin can block AI Studio key creation entirely, and Vertex reaches
+    the same models through a Cloud project instead.
+    """
+    if os.environ.get("GEMINI_API_KEY", "").strip():
+        return "gemini"
+    if _vertex_project():
+        return "vertex"
+    return "none"
 
 
-def _post(url: str, payload: dict, timeout: int = 120) -> dict:
+def _vertex_token() -> str:
+    """Bearer token from Application Default Credentials.
+
+    On a GCP VM this comes from the attached service account, so there is no key
+    file to leak or rotate. Locally it comes from
+    `gcloud auth application-default login`.
+    """
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+    except ImportError as exc:
+        raise MediaError(f"google-auth is required for Vertex: {exc}") from exc
+
+    try:
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        credentials.refresh(Request())
+    except Exception as exc:
+        raise MediaError(
+            "no Google credentials found. Run "
+            "`gcloud auth application-default login`, or run on a VM with a "
+            f"service account attached. ({exc})"
+        ) from exc
+    return credentials.token
+
+
+def _post(url: str, payload: dict, timeout: int = 120, headers: dict | None = None) -> dict:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
     try:
@@ -74,18 +118,32 @@ def _first_inline_image(response: dict) -> tuple[bytes, str]:
 
 def generate_image(prompt: str, out_path: str | Path, aspect_ratio: str = "16:9") -> Path:
     """Generate one image and write it to out_path. Returns the path written."""
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not key:
+    provider = image_provider()
+    if provider == "none":
         raise MediaError(
-            "set GEMINI_API_KEY (from aistudio.google.com) to generate images. "
-            "A Gemini Pro subscription does not work here - it has no API."
+            "no image provider configured. Either set GEMINI_API_KEY from "
+            "aistudio.google.com, or set GOOGLE_CLOUD_PROJECT to use Vertex AI "
+            "(the route to take when a Workspace admin blocks AI Studio keys). "
+            "A Gemini Pro subscription works for neither - it has no API."
         )
 
     payload = {
         "contents": [{"parts": [{"text": f"{prompt}\n\nAspect ratio: {aspect_ratio}."}]}],
         "generationConfig": {"responseModalities": ["IMAGE"]},
     }
-    response = _post(f"{GEMINI_ENDPOINT}/{IMAGE_MODEL}:generateContent?key={key}", payload)
+
+    if provider == "vertex":
+        project, location = _vertex_project(), VERTEX_LOCATION
+        url = (
+            f"https://{location}-aiplatform.googleapis.com/v1/projects/{project}"
+            f"/locations/{location}/publishers/google/models/"
+            f"{VERTEX_IMAGE_MODEL}:generateContent"
+        )
+        response = _post(url, payload, headers={"Authorization": f"Bearer {_vertex_token()}"})
+    else:
+        key = os.environ["GEMINI_API_KEY"].strip()
+        response = _post(f"{GEMINI_ENDPOINT}/{IMAGE_MODEL}:generateContent?key={key}", payload)
+
     data, mime = _first_inline_image(response)
 
     path = Path(out_path)

@@ -32,7 +32,8 @@ class TestProviderSelection:
 
     def test_missing_key_error_names_the_subscription_trap(self, monkeypatch, tmp_path):
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        with pytest.raises(media_router.MediaError, match="does not work here"):
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        with pytest.raises(media_router.MediaError, match="works for neither"):
             media_router.generate_image("a cat", tmp_path / "x.png")
 
 
@@ -86,3 +87,49 @@ class TestVideo:
     def test_video_explains_why_it_cannot_run(self):
         with pytest.raises(media_router.MediaError, match="no free path"):
             media_router.generate_video("a clip")
+
+
+class TestVertexFallback:
+    """Vertex is the route when a Workspace admin blocks AI Studio keys."""
+
+    @pytest.fixture
+    def vertex(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+        monkeypatch.setattr(media_router, "_vertex_token", lambda: "tok")
+
+    def test_project_alone_selects_vertex(self, vertex):
+        assert media_router.image_provider() == "vertex"
+
+    def test_api_key_wins_when_both_are_present(self, vertex, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        assert media_router.image_provider() == "gemini"
+
+    def test_vertex_url_targets_the_project_and_region(self, vertex, monkeypatch, tmp_path):
+        seen = {}
+
+        def capture(url, payload, **kwargs):
+            seen["url"] = url
+            seen["headers"] = kwargs.get("headers") or {}
+            return response_with_image()
+
+        monkeypatch.setattr(media_router, "_post", capture)
+        media_router.generate_image("x", tmp_path / "c.png")
+        assert "my-project" in seen["url"] and "aiplatform.googleapis.com" in seen["url"]
+
+    def test_vertex_request_is_bearer_authenticated(self, vertex, monkeypatch, tmp_path):
+        seen = {}
+
+        def capture(url, payload, **kwargs):
+            seen.update(kwargs.get("headers") or {})
+            return response_with_image()
+
+        monkeypatch.setattr(media_router, "_post", capture)
+        media_router.generate_image("x", tmp_path / "c.png")
+        assert seen.get("Authorization") == "Bearer tok"
+
+    def test_no_provider_error_mentions_both_routes(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        with pytest.raises(media_router.MediaError, match="Vertex"):
+            media_router.generate_image("x", tmp_path / "c.png")

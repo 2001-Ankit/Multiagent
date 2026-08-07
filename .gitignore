@@ -14,9 +14,9 @@ wheels/
 credentials.json
 token.json
 
-/src/search_agent/*
-
-/src/delivery_agent/*
+# Only the credentials live outside git - the code must be committed or a
+# fresh clone cannot import it and the app will not start.
+/src/delivery_agent/credentials/
 
 # Private resume files (keep the folder + its README only)
 /data/resume/*

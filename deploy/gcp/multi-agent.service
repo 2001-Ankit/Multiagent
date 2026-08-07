@@ -26,7 +26,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=__APP_DIR__ __HOME__/agenticblog
+# The leading "-" makes the path optional. The site repo is private and may not
+# be cloned yet; without it systemd fails the whole unit at NAMESPACE setup and
+# the bot never starts, which is a confusing failure for an unrelated feature.
+ReadWritePaths=__APP_DIR__ -__HOME__/agenticblog
 
 StandardOutput=journal
 StandardError=journal

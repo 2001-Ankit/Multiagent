@@ -12,7 +12,11 @@ Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Unbuffered, so journalctl shows output as it happens instead of in blocks.
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONIOENCODING=utf-8
-ExecStart=__HOME__/.local/bin/uv run python src/discord_bot.py
+# Call the venv's interpreter directly rather than going through `uv run`. uv
+# wants to write to ~/.cache/uv on every start, which ProtectHome=read-only
+# forbids, and resolving the environment at boot buys nothing when it is already
+# synced. Run `uv sync` when deploying, not when starting.
+ExecStart=__APP_DIR__/.venv/bin/python src/discord_bot.py
 
 Restart=always
 RestartSec=10

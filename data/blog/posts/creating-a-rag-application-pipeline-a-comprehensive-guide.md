@@ -2,8 +2,8 @@
 title: Creating a RAG Application Pipeline: A Comprehensive Guide
 slug: creating-a-rag-application-pipeline-a-comprehensive-guide
 date: 2026-08-06
-description: As someone interested in AI and software development, I've been exploring the concept of Retrieval-Augmented Generation (RAG) pipelines. In this post, I'll share my findings on how
-tags: 
+description: As someone interested in AI and software development, I've been exploring the concept of Retrieval-Augmented Generation (RAG) pipelines.
+tags: ai,data,trends
 status: published
 published: 2026-08-06
 ---

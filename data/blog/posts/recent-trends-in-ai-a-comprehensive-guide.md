@@ -2,8 +2,8 @@
 title: Recent Trends in AI: A Comprehensive Guide
 slug: recent-trends-in-ai-a-comprehensive-guide
 date: 2026-08-04
-description: As someone interested in AI, finance, and building products, I've been following the latest developments in the field. In this post, I'll share my findings on the recent trends in
-tags: 
+description: As someone interested in AI, finance, and building products, I've been following the latest developments in the field.
+tags: ai,trends,security
 status: published
 published: 2026-08-04
 ---

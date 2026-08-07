@@ -2,7 +2,7 @@
 title: 3 Practical Ways Students in Nepal Can Use AI Tools for Studying
 slug: 3-practical-ways-students-in-nepal-can-use-ai-tools-for-stud
 date: 2026-08-01
-description: As a student in Nepal, I've often found myself struggling to keep up with the vast amount of study materials and resources available. Recently, I've discovered the power of AI tool
+description: As a student in Nepal, I've often found myself struggling to keep up with the vast amount of study materials and resources available.
 tags: ai,students
 status: published
 published: 2026-08-01

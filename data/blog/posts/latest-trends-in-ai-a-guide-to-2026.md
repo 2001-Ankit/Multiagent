@@ -2,8 +2,8 @@
 title: Latest Trends in AI: A Guide to 2026
 slug: latest-trends-in-ai-a-guide-to-2026
 date: 2026-08-04
-description: As someone interested in AI, finance, and building products, I've been following the latest developments in the field. In this post, I'll share my findings on the current state of
-tags: 
+description: As someone interested in AI, finance, and building products, I've been following the latest developments in the field.
+tags: ai,tools,trends
 status: published
 published: 2026-08-04
 ---

@@ -58,11 +58,28 @@ def _split_title(markdown_text: str) -> tuple[str, str]:
     return "Untitled post", text
 
 
-def _description(body: str, limit: int = 180) -> str:
+def _description(body: str, limit: int = 200) -> str:
+    """A complete-sounding summary line, never cut mid-word.
+
+    This shows as the standfirst under the title and as the card and social
+    preview text, so a hard slice at N characters reads as broken rather than
+    abbreviated - ending on a sentence is what makes it look deliberate.
+    """
     for para in body.split("\n\n"):
         clean = " ".join(para.split())
-        if clean and not clean.startswith(("#", "-", "*", ">", "|")):
-            return clean[:limit]
+        if not clean or clean.startswith(("#", "-", "*", ">", "|")):
+            continue
+        if len(clean) <= limit:
+            return clean
+
+        window = clean[: limit + 1]
+        # Prefer a full sentence, but only if it leaves a usable amount of text.
+        best = max(window.rfind(end) for end in (". ", "! ", "? ", ".", "!", "?"))
+        if best > limit * 0.55:
+            return window[: best + 1].strip()
+
+        cut = window.rfind(" ")
+        return (window[:cut] if cut > 0 else window).rstrip(" ,;:-") + "..."
     return ""
 
 

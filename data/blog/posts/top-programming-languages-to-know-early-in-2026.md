@@ -2,8 +2,8 @@
 title: Top Programming Languages to Know Early in 2026
 slug: top-programming-languages-to-know-early-in-2026
 date: 2026-08-04
-description: As a software enthusiast based in Kathmandu, Nepal, I'm always on the lookout for the latest trends in programming languages. With the ever-evolving tech landscape, it's essential
-tags: 
+description: As a software enthusiast based in Kathmandu, Nepal, I'm always on the lookout for the latest trends in programming languages.
+tags: dev,trends,ai
 status: published
 published: 2026-08-04
 ---

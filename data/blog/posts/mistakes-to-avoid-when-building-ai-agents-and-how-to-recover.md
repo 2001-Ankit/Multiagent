@@ -2,8 +2,8 @@
 title: Mistakes to Avoid When Building AI Agents and How to Recover from Them
 slug: mistakes-to-avoid-when-building-ai-agents-and-how-to-recover
 date: 2026-08-05
-description: As someone who has dabbled in building AI agents, I've learned that it's easy to make mistakes, but recovering from them can be a challenge. In this post, I'll share some common mi
-tags: 
+description: As someone who has dabbled in building AI agents, I've learned that it's easy to make mistakes, but recovering from them can be a challenge.
+tags: ai,trends,dev
 status: published
 published: 2026-08-05
 ---

@@ -2,8 +2,8 @@
 title: How Students in Nepal Can Leverage AI Tools for Academic Success
 slug: how-students-in-nepal-can-leverage-ai-tools-for-academic-suc
 date: 2026-08-02
-description: As a student in Nepal, I'm always on the lookout for innovative ways to enhance my learning experience. With the rapid advancement of Artificial Intelligence (AI), I've discovered
-tags: 
+description: As a student in Nepal, I'm always on the lookout for innovative ways to enhance my learning experience. With the rapid advancement of Artificial Intelligence (AI), I've discovered a plethora of AI...
+tags: ai,tools,trends
 status: published
 published: 2026-08-02
 ---

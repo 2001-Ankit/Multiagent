@@ -215,3 +215,37 @@ class TestTagInference:
         category, color = category_for(infer_tags("building LLM agents"))
         assert category == "Ai"
         assert color != "#2c4c34"  # not the Notes fallback
+
+
+class TestDescription:
+    """The description is the standfirst, card text and social preview."""
+
+    def test_short_paragraph_is_used_whole(self):
+        from src.blog.writer import _description
+
+        assert _description("A short intro.") == "A short intro."
+
+    def test_long_text_ends_on_a_sentence(self):
+        from src.blog.writer import _description
+
+        body = ("First sentence here that is reasonably long. " * 3) + "Trailing bit."
+        out = _description(body)
+        assert out.endswith(".")
+        assert "..." not in out
+
+    def test_never_cuts_mid_word(self):
+        from src.blog.writer import _description
+
+        out = _description("supercalifragilistic " * 40)
+        assert not out.replace("...", "").endswith("supercalifragilisti")
+
+    def test_headings_and_lists_are_skipped(self):
+        from src.blog.writer import _description
+
+        assert _description("## A heading\n\n- a list item\n\nReal prose here.") == "Real prose here."
+
+    def test_a_single_long_sentence_falls_back_to_word_boundary(self):
+        from src.blog.writer import _description
+
+        out = _description("word " * 200)
+        assert out.endswith("...") and " wor..." not in out

@@ -9,8 +9,15 @@
 
 import argparse
 
+from dotenv import load_dotenv
+
 from src.blog import store, sync
 from src.blog.builder import build
+
+# The Discord bot loads this itself, so /publish worked while the CLI silently
+# fell back to defaults - BLOG_SITE_DIR unset means a relative "blog-site" that
+# does not exist on a server.
+load_dotenv(override=True)
 
 
 def _deploy(message: str = "", skip_push: bool = False) -> None:

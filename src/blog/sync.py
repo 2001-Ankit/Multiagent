@@ -150,6 +150,19 @@ def push(message: str = "") -> dict:
     repo = site_dir()
     branch = os.getenv("BLOG_SITE_BRANCH", "main").strip() or "main"
 
+    # Two machines publish to this repo now - a laptop and the server - so the
+    # local clone is routinely behind. Without this the push is rejected as a
+    # non-fast-forward and the post silently never goes live.
+    try:
+        _git(repo, "fetch", "origin", branch)
+        _git(repo, "merge", "--ff-only", f"origin/{branch}")
+    except SyncError as exc:
+        # Diverged histories need a human; a merge or rebase here could lose work.
+        raise SyncError(
+            f"{repo} has diverged from origin/{branch} and cannot fast-forward. "
+            f"Resolve it by hand, then publish again.\n{exc}"
+        ) from exc
+
     _git(repo, "add", "-A")
     if not _git(repo, "status", "--porcelain"):
         return {"pushed": False, "reason": "nothing to commit", "branch": branch}

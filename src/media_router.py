@@ -139,17 +139,31 @@ def generate_image(prompt: str, out_path: str | Path, aspect_ratio: str = "16:9"
         },
     }
 
-    if provider == "vertex":
+    def via_vertex():
         project, location = _vertex_project(), VERTEX_LOCATION
         url = (
             f"https://{location}-aiplatform.googleapis.com/v1/projects/{project}"
             f"/locations/{location}/publishers/google/models/"
             f"{VERTEX_IMAGE_MODEL}:generateContent"
         )
-        response = _post(url, payload, headers={"Authorization": f"Bearer {_vertex_token()}"})
-    else:
+        return _post(url, payload, headers={"Authorization": f"Bearer {_vertex_token()}"})
+
+    def via_api_key():
         key = os.environ["GEMINI_API_KEY"].strip()
-        response = _post(f"{GEMINI_ENDPOINT}/{IMAGE_MODEL}:generateContent?key={key}", payload)
+        return _post(f"{GEMINI_ENDPOINT}/{IMAGE_MODEL}:generateContent?key={key}", payload)
+
+    if provider == "vertex":
+        response = via_vertex()
+    else:
+        try:
+            response = via_api_key()
+        except MediaError as exc:
+            # An AI Studio key with no credits left must not shadow a working
+            # Cloud project - they are separate billing pools entirely.
+            if not _vertex_project():
+                raise
+            print(f"[MEDIA] AI Studio failed ({exc}); falling back to Vertex.")
+            response = via_vertex()
 
     data, mime = _first_inline_image(response)
 

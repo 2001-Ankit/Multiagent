@@ -194,3 +194,37 @@ class TestMediaPickup:
     def test_frontmatter_stays_valid_without_media(self, site):
         data = frontmatter(sync.to_astro_markdown(make_post("Hello")))
         assert "cover" not in data and data["title"] == "Hello"
+
+
+class TestPullBeforePush:
+    """Two machines publish to this repo, so the clone is routinely behind."""
+
+    @pytest.fixture
+    def repo(self, tmp_path, monkeypatch):
+        (tmp_path / ".git").mkdir()
+        monkeypatch.setenv("BLOG_SITE_DIR", str(tmp_path))
+        return tmp_path
+
+    def test_fetch_and_ff_run_before_add(self, repo, monkeypatch):
+        calls = []
+
+        def fake_git(_repo, *args):
+            calls.append(args[0])
+            return ""  # clean tree -> stops after the status check
+
+        monkeypatch.setattr(sync, "_git", fake_git)
+        sync.push()
+        assert calls.index("fetch") < calls.index("add")
+        assert "merge" in calls
+
+    def test_divergence_is_raised_not_merged(self, repo, monkeypatch):
+        """A merge or rebase here could lose work, so it stops instead."""
+
+        def fake_git(_repo, *args):
+            if args[0] == "merge":
+                raise sync.SyncError("not possible to fast-forward")
+            return ""
+
+        monkeypatch.setattr(sync, "_git", fake_git)
+        with pytest.raises(sync.SyncError, match="diverged"):
+            sync.push()

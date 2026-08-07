@@ -159,3 +159,33 @@ class TestAspectRatio:
         )
         media_router.generate_image("x", tmp_path / "c.png")
         assert seen["contents"][0]["role"] == "user"
+
+
+class TestProviderFallback:
+    """A depleted AI Studio key must not shadow a funded Cloud project."""
+
+    def test_api_key_failure_falls_back_to_vertex(self, keyed, monkeypatch, tmp_path):
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "my-project")
+        monkeypatch.setattr(media_router, "_vertex_token", lambda: "tok")
+        urls = []
+
+        def post(url, payload, **kwargs):
+            urls.append(url)
+            if "generativelanguage" in url:
+                raise media_router.MediaError("429: prepayment credits are depleted")
+            return response_with_image()
+
+        monkeypatch.setattr(media_router, "_post", post)
+        media_router.generate_image("x", tmp_path / "c.png")
+        assert "generativelanguage" in urls[0]
+        assert "aiplatform" in urls[1]
+
+    def test_without_a_project_the_error_propagates(self, keyed, monkeypatch, tmp_path):
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+        def post(*a, **k):
+            raise media_router.MediaError("429: depleted")
+
+        monkeypatch.setattr(media_router, "_post", post)
+        with pytest.raises(media_router.MediaError, match="depleted"):
+            media_router.generate_image("x", tmp_path / "c.png")

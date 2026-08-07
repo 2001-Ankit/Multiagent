@@ -40,17 +40,30 @@ THEME = {
 
 # Georgia is in the blog's own serif fallback stack, so this is on-brand rather
 # than a compromise. Each entry is tried in order until one exists.
+# Fraunces and Inter are the blog's own typefaces and are Open Font Licensed, so
+# they can be committed and shipped to a server. The system fonts after them are
+# only a safety net.
 FONT_STACKS = {
-    "serif": ["georgiab.ttf", "Georgia Bold.ttf", "constanb.ttf", "DejaVuSerif-Bold.ttf"],
-    "serif_regular": ["georgia.ttf", "Georgia.ttf", "constan.ttf", "DejaVuSerif.ttf"],
-    "sans": ["calibri.ttf", "segoeui.ttf", "arial.ttf", "DejaVuSans.ttf"],
-    "sans_bold": ["calibrib.ttf", "segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
-    "mono": ["consola.ttf", "cour.ttf", "DejaVuSansMono.ttf"],
+    "serif": ["Fraunces.ttf", "georgiab.ttf", "constanb.ttf", "DejaVuSerif-Bold.ttf"],
+    "serif_regular": ["Fraunces.ttf", "georgia.ttf", "constan.ttf", "DejaVuSerif.ttf"],
+    "sans": ["Inter.ttf", "calibri.ttf", "segoeui.ttf", "DejaVuSans.ttf"],
+    "sans_bold": ["Inter.ttf", "calibrib.ttf", "segoeuib.ttf", "DejaVuSans-Bold.ttf"],
+    "mono": ["consola.ttf", "cour.ttf", "DejaVuSansMono.ttf", "LiberationMono-Regular.ttf"],
 }
 
+# Weight axis per role. Variable fonts default to whatever the designer chose -
+# Inter defaults to 400 - so bold roles must set it explicitly or headings render
+# at body weight.
+FONT_WEIGHTS = {"serif": 700, "serif_regular": 400, "sans": 400, "sans_bold": 700}
+
+# A repo-local font directory comes first so a Linux server renders exactly what
+# a Windows machine does. Without it the Linux fallback is DejaVu, and the same
+# deck comes out looking like a different publication.
 FONT_DIRS = [
+    PROJECT_ROOT / "assets" / "fonts",
     Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts",
     Path("/usr/share/fonts/truetype/dejavu"),
+    Path("/usr/share/fonts/truetype/liberation"),
     Path("/Library/Fonts"),
     Path("/System/Library/Fonts"),
 ]
@@ -67,7 +80,25 @@ def _font(role: str, size: int) -> ImageFont.FreeTypeFont:
         for directory in FONT_DIRS:
             candidate = directory / name
             if candidate.exists():
-                return ImageFont.truetype(str(candidate), size)
+                font = ImageFont.truetype(str(candidate), size)
+                weight = FONT_WEIGHTS.get(role)
+                if weight:
+                    try:
+                        axes = font.get_variation_axes()
+                    except OSError:
+                        return font  # a static font: nothing to set
+                    # Axis order is font-specific, so match on name rather than
+                    # position, and leave every other axis at its default.
+                    values = []
+                    for axis in axes:
+                        label = (axis.get("name") or b"").decode(errors="ignore").lower()
+                        target = weight if "weight" in label else axis["default"]
+                        values.append(max(axis["minimum"], min(axis["maximum"], target)))
+                    try:
+                        font.set_variation_by_axes(values)
+                    except OSError:
+                        pass
+                return font
     # Pillow's built-in bitmap font ignores size, but rendering something beats
     # crashing on a machine with an unexpected font set.
     return ImageFont.load_default()

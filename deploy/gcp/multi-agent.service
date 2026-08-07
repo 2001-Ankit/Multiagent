@@ -1,0 +1,36 @@
+[Unit]
+Description=Multi-agent Discord bot
+Documentation=https://github.com/2001-Ankit/Multiagent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Unbuffered, so journalctl shows output as it happens instead of in blocks.
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=__HOME__/.local/bin/uv run python src/discord_bot.py
+
+Restart=always
+RestartSec=10
+# Discord outages and quota exhaustion cause bursts of restarts. Without this a
+# crash loop would hammer the API and get the token rate-limited.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# The process only needs its own directory and the cloned site repo.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__APP_DIR__ __HOME__/agenticblog
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=multi-agent
+
+[Install]
+WantedBy=multi-user.target

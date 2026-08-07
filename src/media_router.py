@@ -175,6 +175,28 @@ def generate_image(prompt: str, out_path: str | Path, aspect_ratio: str = "16:9"
     return path
 
 
+# The cover look, in one place so it can be changed without touching code.
+# Covers are seen mostly off-site - as link previews on LinkedIn, X and Discord -
+# where a bright, photographic image earns a click that a muted abstract one does
+# not. Override with COVER_STYLE to take it somewhere else.
+DEFAULT_COVER_STYLE = (
+    "Vivid photorealistic editorial photography. Bright, saturated, richly "
+    "coloured, with strong directional light and deep contrast. Shallow depth of "
+    "field, cinematic composition, crisp detail, the quality of a high-end "
+    "magazine cover. Striking and immediately eye-catching. Depict a real scene "
+    "or real objects that evoke the subject - not diagrams, not illustration. "
+    "CRITICAL: absolutely no text, letters, numbers, words, labels, logos, brand "
+    "marks or watermarks anywhere in the frame. Image models render lettering "
+    "wrongly - a garbled brand name is worse than no image at all - and the "
+    "layout places real type over this. Where a subject would normally be shown "
+    "through logos or labels, use objects, materials, light and scene instead."
+)
+
+
+def cover_style() -> str:
+    return os.environ.get("COVER_STYLE", "").strip() or DEFAULT_COVER_STYLE
+
+
 def cover_for_post(slug: str, title: str, site_dir: str | Path | None = None) -> Path:
     """Generate a blog cover and save it where the site can serve it.
 
@@ -183,13 +205,7 @@ def cover_for_post(slug: str, title: str, site_dir: str | Path | None = None) ->
     social link previews both need.
     """
     base = Path(site_dir) if site_dir else Path(os.environ.get("BLOG_SITE_DIR", "blog-site"))
-    prompt = (
-        f"Abstract editorial cover illustration for a technical article titled "
-        f"'{title}'. Deep warm charcoal background with subtle paper grain, thin "
-        f"muted teal linework, sparse off-white accents, generous negative space, "
-        f"high-end print magazine aesthetic. Convey the idea through geometry "
-        f"alone. No text, no letters, no numbers, no UI, no code."
-    )
+    prompt = f"Cover image for an article titled '{title}'. {cover_style()}"
     return generate_image(prompt, base / "public" / "covers" / f"{slug}.png")
 
 

@@ -49,10 +49,19 @@ This is NOT a blog post. It is one piece of content for Instagram, TikTok and
 YouTube Shorts. What overperforms in this niche: a numbered or comparative frame,
 exactly one idea per scene, concrete specifics, and no filler.
 
+Use only as many scenes as you have genuinely distinct points - never pad to hit
+the upper limit, and never add a summary, recap or generic-advice scene. People
+judge the piece by its weakest scene, so a shorter strong one wins.
+
 For each scene give:
 - heading: at most 7 words, and it MUST be a claim or a finding, never a category
   label. "Not all 429s are equal", not "Rate Limit Types".
-- body: 1-2 short sentences, under 200 characters.
+- body: 2-3 sentences, roughly 160-320 characters. Explain the MECHANISM - why it
+  happens, or what it means for the reader - never just restate the heading.
+  Someone who has never hit this should finish the scene understanding it.
+  One idea per scene does not mean one sentence per scene: people save and share
+  these because they learned something, so each scene must teach its idea rather
+  than name it.
 
 NEVER INVENT A STATISTIC. This is the most important rule here. Do not write a
 percentage, a multiple, a count or a benchmark unless it appears verbatim in the

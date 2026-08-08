@@ -25,8 +25,17 @@ What works in this format, based on posts that beat their creator's median by 20
 or more: a numbered or comparative frame, exactly one idea per slide, concrete
 specifics over generalities, and no filler. The reader is swiping on a phone.
 
+One idea per slide does NOT mean one sentence per slide. People save and share a
+carousel because they learned something, so each slide has to actually teach its
+one idea, not merely name it.
+
 Rules:
-- 6 to 8 content slides. No more - people stop swiping.
+- 5 to 8 content slides, and ONLY as many as you have genuinely distinct points.
+  Never pad to reach 8. A 5-slide carousel that teaches beats an 8-slide one
+  carrying two weak slides, because people judge it by the worst slide they see.
+- No summary, recap or "key takeaways" slide, and no generic advice slide
+  ("measure your latency", "test your models"). Those are filler that says
+  nothing the earlier slides did not. The outro closes the piece.
 - heading: at most 7 words, and it MUST be a claim, a finding or a comparison.
   It is the largest text on the slide and many people read only the headings, so
   it has to carry the insight by itself. Never a category label or bare noun
@@ -37,7 +46,16 @@ Rules:
     bad:  "Rate Limit Types"        (label, says nothing)
     bad:  "Latency Issues"          (label)
     bad:  "Project Scale"           (label)
-- body: 1 to 2 short sentences, under 220 characters. Put the numbers here.
+- body: 2 to 3 sentences, roughly 160 to 320 characters. This is where the value
+  is. Explain the MECHANISM - why it happens, or what it means for the reader -
+  never just restate the heading. Someone who has never hit this problem should
+  finish the slide understanding it. Put the numbers here.
+    too thin: "Per-minute limit: back off and retry, per-day limit: do not retry."
+    good:     "A per-minute limit clears in 60 seconds, so backing off and
+               retrying works. A per-day limit does not clear until midnight, so
+               every retry burns an attempt you cannot get back. Same status
+               code, opposite correct response."
+  The second one teaches. The first only labels.
 - code: at most 4 short lines. Include it whenever a config value, an error or a
   snippet makes the point sharper than prose would - roughly a third of slides
   benefit. Omit the key entirely when it does not.

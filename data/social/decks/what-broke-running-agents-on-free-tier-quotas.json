@@ -6,45 +6,49 @@
   "slides": [
     {
       "heading": "The swarm ate my whole quota",
-      "body": "70,000 tokens triggered rate limits almost immediately",
-      "code": "concurrent_agents = 3\ntool_result_max_length = 1500"
+      "body": "Running 13 specialist agents in parallel pushed a single query to roughly 70,000 tokens, triggering rate limits almost immediately. I had to cap each tool result at 1,500 characters and compact conversation history to mitigate this.",
+      "code": "max_tokens = 1500"
     },
     {
       "heading": "Not all 429s are equal",
-      "body": "Per-minute limit: back off and retry, per-day limit: do not retry",
-      "code": "if 429 == TPM: retry\nelif 429 == TPD: do not retry"
-    },
-    {
-      "heading": "A colon broke the build",
-      "body": "Unquoted colons in YAML frontmatter caused errors",
-      "code": "generated_string = '\"' + generated_string + '\"'"
+      "body": "A per-minute limit clears in 60 seconds, so backing off and retrying works. A per-day limit does not clear until midnight, so every retry burns an attempt you cannot get back. Same status code, opposite correct response.",
+      "code": "if limit_type == 'TPM':\n  retry_after(60)"
     },
     {
       "heading": "Latency was 8x over budget",
-      "body": "Median response time: 6.7 seconds, p90: 24.0 seconds"
+      "body": "The median response time was 6.7 seconds, with a p90 of 24.0 seconds. Only 5 out of 22 runs finished in under a second, which is far from the 800 milliseconds required for a real-time voice interface."
     },
     {
-      "heading": "Model fallback across providers",
-      "body": "Chain consists of 4 models from different providers",
-      "code": "models = [\"llama-3.3-70b-versatile\", \"llama-3.1-8b-instant\", \"openai/gpt-oss-120b\", \"nvidia/llama-3.3-nemotron-super-49b-v1.5\"]"
+      "heading": "Model fallback across providers matters",
+      "body": "My model fallback chain consists of 4 models from different providers. When one provider's daily quota is exhausted, every model from that provider is exhausted at once. I had to deliberately cross providers to ensure reliability.",
+      "code": "models = ['llama-3.3-70b', 'llama-3.1-8b', 'openai/gpt-oss-120b']"
     },
     {
-      "heading": "One model could not call tools",
-      "body": "gpt-oss-20b produced output_parse_failed and tool_use_failed errors"
+      "heading": "A colon broke the build",
+      "body": "My agent wrote posts with unquoted colons in the frontmatter, which is invalid YAML. I had to quote every generated string to fix this issue.",
+      "code": "frontmatter = {'title': '\"' + title + '\"'}"
     },
     {
       "heading": "Two repos, one mistake",
-      "body": "Automation stopped one step short of being useful"
+      "body": "The agent wrote posts into one repo, but the website read from a different repo. I had to connect the two to ensure automation was complete."
+    },
+    {
+      "heading": "Measure and monitor latency",
+      "body": "To avoid the pitfalls I encountered, measure and monitor latency to ensure it meets your requirements. Implement rate limiting and model fallback strategies to avoid quota exhaustion."
+    },
+    {
+      "heading": "Test your model's limitations",
+      "body": "Test your model's ability to handle structured tool calling and escape generated content to avoid formatting issues."
     }
   ],
-  "outro": "Save this for later and swipe back to slide 1",
-  "caption": "Building a personal multi-agent AI assistant on free-tier quotas? I learned some hard lessons. \nHere are the top takeaways. \nDon't make the same mistakes I did!",
+  "outro": "Go back to slide 1 to learn more",
+  "caption": "Building a personal multi-agent AI assistant on free-tier quotas was a challenge. \nI encountered several issues, from latency to rate limits. \nHere's what I learned and how you can avoid the same pitfalls.",
   "hashtags": [
     "#AIassistant",
-    "#FreeTierQuotas",
-    "#RateLimiting",
-    "#ModelFallback",
-    "#LatencyOptimization"
+    "#multiaiagent",
+    "#freetierquotas",
+    "#latencyissues",
+    "#ratelimits"
   ],
   "slug": "what-broke-running-agents-on-free-tier-quotas",
   "handle": "@ankitrai"

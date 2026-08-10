@@ -127,6 +127,8 @@ HELP_TEXT = (
     "I remember our recent conversation, so follow-ups like "
     "'tell me more about the second one' work.\n\n"
     "**Commands:** /daily /news /jobs /watch /model /help\n"
+    "**Interview prep:** /interview [area] - one concept question + one coding "
+    "problem, rotating a syllabus. `/interview progress` shows coverage.\n"
     "**Memory:** /remember <fact> | /memory | /forget\n"
     "**Content:** /content <topic> - plans a post + the media prompts to make it\n"
     "  `/content video: <topic>` plans clips instead of slides\n"
@@ -544,6 +546,41 @@ async def on_message(message: discord.Message):
         if brief.get("caption"):
             tags = " ".join(brief.get("hashtags") or [])
             await message.channel.send(f"**Caption**\n{brief['caption']}\n{tags}")
+        return
+
+    if command == "/interview":
+        parts = text.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        from src.interview_agent import coach
+        from src.interview_agent.syllabus import SYLLABUS, topic_id
+
+        if arg.lower() in {"progress", "history", "status"}:
+            state = coach.progress()
+            covered = coach._load_history()["covered"]
+            lines = [f"**Covered {state['covered']} of {state['total']} topics**"]
+            for area in state["areas"]:
+                done = sum(1 for a, t in SYLLABUS if a == area and topic_id(a, t) in covered)
+                total = sum(1 for a, _ in SYLLABUS if a == area)
+                bar = "#" * done + "." * (total - done)
+                lines.append(f"`{bar}` {area} {done}/{total}")
+            await message.channel.send("\n".join(lines))
+            return
+
+        await message.channel.send(
+            f"Preparing today's practice{f' on {arg}' if arg else ''}..."
+        )
+        try:
+            practice = await asyncio.to_thread(coach.daily_set, arg)
+        except Exception as exc:
+            await message.channel.send(f"Could not build the practice set: {exc}")
+            return
+
+        await send_long(
+            message.channel,
+            f"**{practice['area']}: {practice['topic']}**\n"
+            f"_Topic {practice['covered']} of {practice['total']}_\n\n{practice['body']}",
+        )
         return
 
     if command == "/carousel":

@@ -51,9 +51,17 @@ def _post_message(webhook_url: str, text: str) -> None:
 
 
 @tool
-def send_discord_message(text: str) -> str:
-    """Send a message to a Discord channel via the configured webhook URL."""
-    webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+def send_discord_message(text: str, webhook_env: str = "") -> str:
+    """Send a message to a Discord channel via a configured webhook URL.
+
+    `webhook_env` names an alternative env var, so a briefing can be routed to
+    its own channel - interview practice in #interview, news in the main one -
+    falling back to the default channel when that var is not set.
+    """
+    webhook_url = ""
+    if webhook_env:
+        webhook_url = os.getenv(webhook_env, "").strip()
+    webhook_url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL", "").strip()
     if not webhook_url:
         raise ValueError("DISCORD_WEBHOOK_URL must be set to send Discord messages.")
     if not text or not text.strip():

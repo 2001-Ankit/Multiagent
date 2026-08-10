@@ -80,3 +80,64 @@ class TestDailySet:
         )
         coach.daily_set(mark=False)
         assert coach.progress()["covered"] == 0
+
+
+class TestBehavioural:
+    """The behavioural round decides more mid-level offers than people expect."""
+
+    def test_themes_are_unique(self):
+        from src.interview_agent.syllabus import BEHAVIOURAL
+
+        ids = [topic_id(a, t) for a, t in BEHAVIOURAL]
+        assert len(ids) == len(set(ids))
+
+    def test_covers_the_standard_themes(self):
+        from src.interview_agent.syllabus import BEHAVIOURAL
+
+        themes = {a.lower() for a, _ in BEHAVIOURAL}
+        for expected in ("ownership", "conflict", "judgement", "ambiguity"):
+            assert expected in themes
+
+    def test_rotation_advances(self):
+        first = coach.next_behavioural()
+        coach.record_behavioural(*first)
+        assert coach.next_behavioural() != first
+
+    def test_tracks_rotate_independently(self):
+        """Otherwise the same technical/behavioural pair recurs every cycle."""
+        coach.record(*SYLLABUS[0])
+        # Advancing the technical track must not move the behavioural one.
+        assert coach.next_behavioural() == __import__(
+            "src.interview_agent.syllabus", fromlist=["BEHAVIOURAL"]
+        ).BEHAVIOURAL[0]
+
+    def test_daily_set_reports_both_tracks(self, monkeypatch):
+        monkeypatch.setattr(
+            coach, "_invoke", lambda m: type("R", (), {"content": "body"})()
+        )
+        result = coach.daily_set()
+        assert result["behavioural"]
+        assert result["area"]
+
+    def test_prompt_forbids_inventing_the_candidates_story(self):
+        assert "Never invent an experience" in coach.SYSTEM
+
+
+class TestCodingLadder:
+    """Three levels, because one problem cannot show range."""
+
+    def test_prompt_defines_three_levels(self):
+        for level in ("Level 1 - Warm-up", "Level 2 - Intermediate", "Level 3 - Senior"):
+            assert level in coach.SYSTEM
+
+    def test_every_level_requires_runnable_tests(self):
+        assert coach.SYSTEM.count("**Tests**") >= 3
+
+    def test_standard_library_only(self):
+        # numpy in a "runnable" answer is how the first version produced code
+        # that crashed on variable-length arrays.
+        assert "standard library ONLY" in coach.SYSTEM
+
+    def test_delivery_coaching_is_included(self):
+        assert "How to talk through it" in coach.SYSTEM
+        assert "When you get stuck" in coach.SYSTEM

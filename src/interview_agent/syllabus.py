@@ -87,6 +87,35 @@ SYLLABUS: list[tuple[str, str]] = [
 ]
 
 
+# Behavioural rounds decide more mid-level offers than people expect: the
+# technical bar is met by many candidates, and this round is where they separate.
+# Rotated independently of the technical syllabus so each day pairs a fresh one.
+BEHAVIOURAL: list[tuple[str, str]] = [
+    ("Ownership", "Tell me about something you shipped that did not work as expected in production"),
+    ("Ownership", "Describe a production incident you caused. What happened and what changed afterwards"),
+    ("Ownership", "Tell me about a time you found a serious problem nobody had noticed"),
+    ("Conflict", "Describe a technical disagreement with a senior engineer. How was it resolved"),
+    ("Conflict", "Tell me about a time you had to push back on what a stakeholder asked for"),
+    ("Conflict", "Describe receiving feedback you disagreed with"),
+    ("Judgement", "Tell me about a time you decided NOT to use ML or an LLM for a problem"),
+    ("Judgement", "Describe shipping something with known limitations. How did you decide it was acceptable"),
+    ("Judgement", "Tell me about a time you cut scope to hit a deadline. What did you drop and why"),
+    ("Judgement", "Describe a time your offline evaluation disagreed with production behaviour"),
+    ("Ambiguity", "Tell me about a project where the requirements were unclear. How did you proceed"),
+    ("Ambiguity", "Describe a time you had to make a decision without enough data"),
+    ("Communication", "Explain a technical trade-off you had to make to a non-technical stakeholder"),
+    ("Communication", "Tell me about a time you had to manage someone's expectations about what AI could do"),
+    ("Communication", "Describe how you documented or handed over a system you built"),
+    ("Growth", "Tell me about a time you were wrong about something technical"),
+    ("Growth", "Describe having to learn an unfamiliar technology quickly to deliver"),
+    ("Growth", "What is a project you would build differently now, and why"),
+    ("Collaboration", "Tell me about a time you unblocked or mentored someone"),
+    ("Collaboration", "Describe working with someone whose standards differed from yours"),
+    ("Constraints", "Tell me about a time cost or compute limits forced a design change"),
+    ("Constraints", "Describe a time you raised a data quality or privacy concern"),
+]
+
+
 def areas() -> list[str]:
     seen: list[str] = []
     for area, _ in SYLLABUS:

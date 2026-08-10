@@ -17,7 +17,7 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.interview_agent.syllabus import SYLLABUS, areas, topic_id
+from src.interview_agent.syllabus import BEHAVIOURAL, SYLLABUS, areas, topic_id
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HISTORY_PATH = PROJECT_ROOT / "data" / "interview" / "history.json"
@@ -48,39 +48,95 @@ forget. Be specific about what the weak version sounds like.
 **Follow-up you will get**
 One harder question the interviewer asks next, with a two-sentence answer.
 
-## Coding problem
-A problem for a 30-40 minute screen. Prefer what an AI engineer actually hits -
-sliding-window chunking with overlap, top-k selection, cosine similarity from
-scratch, an LRU embedding cache, a token-bucket rate limiter, batch packing under
-a token budget, streaming-chunk reassembly, deduplicating near-identical results.
+## Coding problems
+THREE problems that build on each other, warm-up to senior. Where it fits
+naturally they should share a thread, so the third feels like the first grown up
+rather than three unrelated puzzles.
 
-HARD REQUIREMENTS for this section:
+HARD REQUIREMENTS for all three:
 - Pure Python standard library ONLY. No numpy, no sklearn, no torch, no network.
-  The problem must be runnable and checkable as-is.
-- State the exact function signature, the input, and the output.
-- Give one worked example with real values.
+  Every solution must be runnable and checkable as-is.
+- State the exact function signature, the input and the output.
+- Prefer what an AI engineer actually hits: chunking with overlap, top-k
+  selection, cosine similarity from scratch, LRU embedding caches, token-bucket
+  rate limiting, batch packing under a token budget, streaming reassembly,
+  near-duplicate removal, retry with backoff.
 
-**Constraints**
-Sizes and edge cases that determine the approach.
+Write each of the three as:
 
-**Solution**
-Complete, correct, runnable Python. No pseudo-code, no placeholders, no invented
-APIs. If you cannot write it correctly, choose a simpler problem.
+### Level 1 - Warm-up (5-10 min)
+One clear operation. A competent engineer writes it without pausing. This is the
+screen for "can they code at all".
+**Solution** - complete runnable Python
+**Tests** - 2 passing asserts
+**Complexity** - time and space
 
-**Tests**
-3 assert statements that pass against your solution, including one edge case.
-Verify each one mentally before writing it - a failing assert is worse than none.
+### Level 2 - Intermediate (20-30 min)
+Extends level 1 with a real complication: an edge case that breaks the naive
+version, a second constraint, or an efficiency requirement that rules out brute
+force. State plainly what makes it harder.
+**Solution** - complete runnable Python
+**Tests** - 3 passing asserts including the edge case
+**Complexity** - time and space, and why the naive approach is not enough
 
-**Complexity**
-Time and space, with one line on why.
+### Level 3 - Senior (30-45 min)
+Now it is a design problem with code: concurrency, memory limits, streaming
+input that does not fit in RAM, or correctness under partial failure. There is a
+real trade-off with no single right answer.
+**Solution** - complete runnable Python
+**Tests** - 3 passing asserts
+**Complexity** - and the trade-off you chose, with what you gave up
+**What a senior does differently here** - two bullets
 
 **What the interviewer is really testing**
-One or two sentences.
+One or two sentences covering the whole ladder.
+
+## How to talk through it
+Most candidates lose a live screen on delivery, not on the algorithm. For TODAY'S
+level 2 problem specifically, write:
+
+**The first 60 seconds** - the clarifying questions to ask before writing
+anything, and the one-sentence restatement of the problem that proves you
+understood it.
+
+**Thinking out loud** - 3 bullets of what to actually say while coding. Real
+sentences you could speak, not "explain your approach".
+
+**When you get stuck** - what to say instead of going silent. Silence is what
+fails the round; a stuck candidate who narrates is still passing.
+
+**Closing it out** - how to walk your own tests, name the complexity, and say
+what you would do with more time.
+
+## Behavioural question
+The question, worded as an interviewer says it.
+
+**Structure your answer**
+Four short lines - Situation, Task, Action, Result - saying what belongs in each
+FOR THIS QUESTION specifically. Not a generic description of STAR.
+
+**Where to look in your own experience**
+3 bullets describing the *kind* of story that answers this well, so the candidate
+can find one of their own. Never invent an experience for them and never write
+the story - a fabricated answer collapses on the first follow-up, and the
+interviewer will ask three.
+
+**What makes the answer strong**
+2-3 bullets: the specific detail, the number, the reflection that lands.
+
+**Red flags**
+2-3 bullets: blaming others, no measurable outcome, a story with no real
+difficulty in it, or a "weakness" that is a humblebrag.
+
+**Follow-ups they will ask**
+Two short probing questions, because interviewers always dig once.
 
 Rules:
 - Be concrete. Real numbers, real library names, real failure modes.
 - Never pad. If a bullet says nothing, delete it.
-- The solution must actually run. Do not invent APIs."""
+- The solution must actually run. Do not invent APIs.
+- For the behavioural section, coach the candidate to their own story. Do not
+  supply one."""
 
 
 def _load_history() -> dict:
@@ -114,6 +170,24 @@ def next_topic(area: str = "") -> tuple[str, str]:
     if unseen:
         return unseen[0]
     return min(pool, key=lambda t: history.get(topic_id(*t), ""))
+
+
+def next_behavioural() -> tuple[str, str]:
+    """Rotated on its own key so the technical and behavioural tracks do not
+    advance in lockstep and pair the same two topics every cycle."""
+    history = _load_history().get("behavioural", {})
+    unseen = [b for b in BEHAVIOURAL if topic_id(*b) not in history]
+    if unseen:
+        return unseen[0]
+    return min(BEHAVIOURAL, key=lambda b: history.get(topic_id(*b), ""))
+
+
+def record_behavioural(area: str, topic: str) -> None:
+    history = _load_history()
+    history.setdefault("behavioural", {})[topic_id(area, topic)] = datetime.now().strftime(
+        "%Y-%m-%d"
+    )
+    _save_history(history)
 
 
 def record(area: str, topic: str) -> None:
@@ -156,13 +230,16 @@ def _invoke(messages):
 def daily_set(area: str = "", mark: bool = True) -> dict:
     """Generate one day of practice and record the topic as covered."""
     topic_area, topic = next_topic(area)
+    behav_area, behav_topic = next_behavioural()
     response = _invoke(
         [
             SystemMessage(content=SYSTEM.format(role=TARGET_ROLE)),
             HumanMessage(
                 content=(
-                    f"Area: {topic_area}\nTopic: {topic}\n\n"
-                    "Write today's practice on exactly this topic."
+                    f"Technical area: {topic_area}\nTechnical topic: {topic}\n\n"
+                    f"Behavioural theme: {behav_area}\n"
+                    f"Behavioural question: {behav_topic}\n\n"
+                    "Write today's practice on exactly these."
                 )
             ),
         ]
@@ -170,10 +247,12 @@ def daily_set(area: str = "", mark: bool = True) -> dict:
     body = str(response.content).strip()
     if mark:
         record(topic_area, topic)
+        record_behavioural(behav_area, behav_topic)
     state = progress()
     return {
         "area": topic_area,
         "topic": topic,
+        "behavioural": f"{behav_area}: {behav_topic}",
         "body": body,
         "covered": state["covered"],
         "total": state["total"],

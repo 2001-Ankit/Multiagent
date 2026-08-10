@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from src.search_core import DDGS
@@ -7,65 +8,97 @@ from langchain.tools import tool
 MAX_FIELD_LENGTH = 400
 
 # Query hints that steer a broad section label toward useful headlines.
+# Deliberately free of any named event: a hardcoded tournament keeps being
+# reported long after it has finished.
 SECTION_HINTS = {
-    "finance": "finance markets economy stocks business",
-    "politics": "politics government policy election international",
-    "sports": "sports match result tournament league fixtures",
-    "technology": "technology tech AI software startups",
-    "world": "world international breaking headlines developing",
+    "finance": "markets economy stocks indices central bank inflation earnings",
+    "politics": "politics government policy election geopolitics diplomacy",
+    "sports": "major tournament league final standings result fixtures",
+    "technology": "technology AI software startups chips",
+    "world": "world international breaking developing",
     "top": "top stories breaking developing today",
     "business": "business company industry economy",
-    "nepal": "Nepal Kathmandu NEPSE government news",
+    "nepal": "Nepal Kathmandu NEPSE government",
 }
 
+# The same sections seen from Nepal. Every section is fetched twice - once
+# globally, once locally - because a briefing that is only global misses what
+# actually affects the reader, and one that is only local misses the context.
+# Deliberately short. The news backend returns nothing for long keyword strings -
+# "Nepal NEPSE Nepal Rastra Bank Nepali economy remittance rupee" gives 0 results
+# where "NEPSE Nepal stock market" gives real headlines.
+LOCAL_HINTS = {
+    "finance": "NEPSE Nepal stock market",
+    "politics": "Nepal government politics",
+    "sports": "Nepal cricket football",
+    "technology": "Nepal technology startup",
+    "world": "Nepal international",
+    "top": "Nepal news",
+    "business": "Nepal business economy",
+}
+LOCAL_LABEL = os.environ.get("NEWS_LOCAL_LABEL", "Nepal").strip() or "Nepal"
 
-@tool
-def fetch_news_section(topic: str, region: str = "us-en", max_results: int = 6) -> str:
-    """Fetch recent news headlines for a single section/topic (e.g. finance, politics, sports).
 
-    Returns dated headlines with a short summary, source, and URL so the agent can
-    assemble a clean sectioned digest.
-    """
-    normalized = topic.strip().lower()
-    hint = SECTION_HINTS.get(normalized, topic.strip())
-    query = f"{topic.strip()} {hint} latest news".strip()
-    safe_results = max(5, min(int(max_results), 10))
-
-    try:
-        results = DDGS().news(
-            query=query,
-            region=region,
-            safesearch="off",
-            timelimit="d",
-            page=1,
-            max_results=safe_results,
-            backend="auto",
-        )
-    except DDGSException as exc:
-        # Fall back to a weekly window if the daily window returns nothing usable.
+def _news_search(query: str, region: str, max_results: int) -> list[dict[str, Any]]:
+    """One news search, retried over a weekly window if today returns nothing."""
+    for window in ("d", "w"):
         try:
             results = DDGS().news(
                 query=query,
                 region=region,
                 safesearch="off",
-                timelimit="w",
+                timelimit=window,
                 page=1,
-                max_results=safe_results,
+                max_results=max_results,
                 backend="auto",
             )
         except DDGSException:
-            return _format_error(topic, exc)
+            continue
+        if results:
+            return results
+    return []
 
-    return _format_section(topic=topic, results=results)
+
+@tool
+def fetch_news_section(topic: str, region: str = "us-en", max_results: int = 6) -> str:
+    """Fetch recent headlines for one section, globally and from Nepal.
+
+    Covers each section from both angles in a single call - a briefing that is
+    only global misses what affects the reader, and one that is only local misses
+    the context. Returns dated headlines with a summary, source and URL.
+    """
+    normalized = topic.strip().lower()
+    label = topic.strip().title()
+    hint = SECTION_HINTS.get(normalized, topic.strip())
+    safe_results = max(5, min(int(max_results), 10))
+
+    blocks: list[str] = []
+    world = _news_search(f"{topic.strip()} {hint} latest news".strip(), region, safe_results)
+    blocks.append(_format_section(f"{label} (Global)", world))
+
+    local_hint = LOCAL_HINTS.get(normalized)
+    if local_hint:
+        # Fewer results locally: Nepal coverage is thinner, and padding it with
+        # loosely-matched stories is worse than a short honest section.
+        local = _news_search(local_hint, "wt-wt", max(3, safe_results // 2))
+        if local:
+            blocks.append(_format_section(f"{label} ({LOCAL_LABEL})", local))
+
+    if not world and len(blocks) == 1:
+        return _format_error(topic, "no results in the last week")
+    return "\n\n".join(blocks)
 
 
 @tool
 def fetch_live_updates(event: str, max_results: int = 5) -> str:
     """Fetch current live status/scores/standings for an ongoing event.
 
-    Use for live sports (e.g. World Cup scores, fixtures, standings) or any fast-
-    moving situation where the latest state matters more than dated headlines.
-    Combines web snippets (for current scores/status) with fresh news.
+    Pass whichever competition is actually running right now - identify it from
+    the sports headlines first rather than assuming. Naming a tournament that has
+    already finished returns stale results reported as current.
+
+    Also works for any fast-moving situation where the latest state matters more
+    than a dated headline. Combines web snippets with fresh news.
     """
     safe_results = max(3, min(int(max_results), 8))
     text_query = f"{event.strip()} live score result today standings latest update"
@@ -137,7 +170,7 @@ def _format_section(topic: str, results: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _format_error(topic: str, error: Exception) -> str:
+def _format_error(topic: str, error: Exception | str) -> str:
     return (
         f"Section: {topic.strip().title()}\n\n"
         "News lookup failed for this section.\n"

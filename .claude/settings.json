@@ -17,7 +17,9 @@
       "Bash(GOOGLE_CLOUD_PROJECT=ankit-agent-001 PYTHONIOENCODING=utf-8 timeout 180 uv run python -c ' *)",
       "Bash(curl -s -o /dev/null -w \"Multiagent: %{http_code}\\\\n\" https://github.com/2001-Ankit/Multiagent)",
       "Bash(curl -s -o /dev/null -w \"agenticblog: %{http_code}\\\\n\" https://github.com/2001-Ankit/agenticblog)",
-      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)"
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 timeout 240 uv run python -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 timeout 280 uv run python -c ' *)"
     ]
   },
   "enabledPlugins": {

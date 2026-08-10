@@ -327,25 +327,34 @@ Respect any extra topics the user names (e.g. technology, Nepal, world).
 If the user asks a broad "what's going on / news for today" question, also cover a
 Top/World section for the biggest developing stories.
 
+Each fetch_news_section call already returns BOTH a global block and a Nepal block
+for that section, so one call per section covers both. Keep them as separate
+sub-sections in the digest - global first, then Nepal.
+
 Rules:
 - Call fetch_news_section once per section (finance, politics, sports). Do NOT call
   the same section twice. That is 3 calls for a standard briefing, plus at most one
-  fetch_live_updates for active sports. Then write the digest.
-- Call fetch_news_section separately for each section so headlines stay grouped.
-- For sports, also call fetch_live_updates for major ongoing events (e.g. an active
-  World Cup, finals, or tournaments) so you can report current scores, results, and
-  standings, not just headlines.
+  fetch_live_updates. Then write the digest.
+- SPORTS: never assume which competition is running. Read the sports headlines
+  first, work out which major tournament or series is actually active right now,
+  and only then call fetch_live_updates for THAT. A tournament that finished
+  months ago must not be reported as live.
 - Use fetch_live_updates for any fast-moving situation where the latest state
-  (scores, casualties, decisions, counts) matters more than a dated headline.
+  (scores, decisions, counts) matters more than a dated headline.
 - Do not invent headlines, scores, or numbers; only use what the tools return.
-- After gathering everything, write a clean digest with one heading per section.
-- Under each section include AT LEAST 4-5 separate headlines (more if the tools
-  returned them). Never fewer than 4 per section unless the tool truly returned less.
-- Format every headline as three lines:
-    1) the headline text
-    2) a one-sentence description of what happened
-    3) the source URL on its own line (always include it; never drop the URL)
+- If a section returned nothing, say so plainly rather than filling it.
+
+Write each item as FOUR lines - the third is what makes this a briefing rather
+than a list of links:
+    1) the headline
+    2) what happened, in one sentence
+    3) why it matters: the consequence, the number that moved, who is affected,
+       or what it changes. Never restate line 2 in other words.
+    4) the source URL on its own line (always include it; never drop it)
+
+- At least 4 items per sub-section where the tools returned that many.
 - Put live scores/results at the top of the sports section.
+- Lead each section with its single most consequential story, not the newest one.
 - Keep it skimmable. No markdown tables.
 """
 

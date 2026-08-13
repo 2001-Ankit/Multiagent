@@ -89,6 +89,38 @@ def fetch_news_section(topic: str, region: str = "us-en", max_results: int = 6) 
     return "\n\n".join(blocks)
 
 
+# Separate queries because one broad "AI news" search returns opinion pieces and
+# funding rounds, burying the two things that actually matter to a practitioner:
+# what shipped, and whether it is any good.
+# Short on purpose. "LLM benchmark results comparison outperforms" returns zero
+# results; "AI benchmark" returns real coverage - the backend does not reward
+# more keywords.
+AI_ANGLES = {
+    "Model releases": "AI model release",
+    "Benchmarks": "AI benchmark",
+    "Tooling": "AI developer tools",
+    "Industry": "OpenAI Anthropic Google AI",
+}
+
+
+@tool
+def fetch_ai_news(max_per_angle: int = 4) -> str:
+    """Fetch today's AI news split by angle: releases, benchmarks, tooling, industry.
+
+    Use for a daily AI briefing. Returns each angle as its own section so the
+    digest can keep "what shipped" separate from "who raised money".
+    """
+    limit = max(3, min(int(max_per_angle), 6))
+    blocks = []
+    for angle, query in AI_ANGLES.items():
+        results = _news_search(query, "wt-wt", limit)
+        if results:
+            blocks.append(_format_section(angle, results))
+    if not blocks:
+        return _format_error("AI news", "no results in the last week")
+    return "\n\n".join(blocks)
+
+
 @tool
 def fetch_live_updates(event: str, max_results: int = 5) -> str:
     """Fetch current live status/scores/standings for an ongoing event.
@@ -153,7 +185,9 @@ def fetch_live_updates(event: str, max_results: int = 5) -> str:
 
 
 def _format_section(topic: str, results: list[dict[str, Any]]) -> str:
-    header = f"Section: {topic.strip().title()}"
+    # No .title() here: callers pass a display-ready label, and re-casing it
+    # mangles labels like "Model releases" and any acronym.
+    header = f"Section: {topic.strip()}"
     if not results:
         return f"{header}\n\nNo recent headlines found for this section."
 

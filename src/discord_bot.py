@@ -316,6 +316,7 @@ MODE_COMMANDS = {
     "content": {"/content", "/carousel", "/scene", "/assemble"},
     "news": {"/news", "/ai", "/daily", "/watch"},
     "dev": {"/dev", "/repos", "/papers"},
+    "academic": {"/uni", "/university", "/unis", "/unimatch", "/prof", "/professor"},
     "jobs": {"/jobs"},
 }
 
@@ -638,6 +639,111 @@ async def on_message(message: discord.Message):
         if brief.get("caption"):
             tags = " ".join(brief.get("hashtags") or [])
             await message.channel.send(f"**Caption**\n{brief['caption']}\n{tags}")
+        return
+
+    if command in {"/uni", "/university"}:
+        parts = text.split(maxsplit=1)
+        payload = parts[1].strip() if len(parts) > 1 else ""
+        from src.academic_agent import tracker
+
+        if not payload:
+            await message.channel.send(
+                "Paste the programme details after the command.\n"
+                "`/uni Stanford MS CS, deadline Dec 1 2026, GRE optional, TOEFL 100`\n"
+                "`/uni columns` lists every field I track."
+            )
+            return
+        if payload.lower() == "columns":
+            await send_long(
+                message.channel,
+                "**Tracked columns**\n" + "\n".join(f"- {c}" for c in tracker.COLUMNS),
+            )
+            return
+
+        await message.channel.send("Reading that...")
+        try:
+            row, created = await asyncio.to_thread(tracker.add_from_text, payload)
+        except Exception as exc:
+            await message.channel.send(f"Could not parse that: {exc}")
+            return
+
+        filled = {k: v for k, v in row.items() if v and k not in {"date_added", "status"}}
+        missing = [
+            c for c in ("deadline", "funding_type", "gre_required", "tuition_per_year")
+            if not row.get(c)
+        ]
+        name = row["university"] or "(no name)"
+        title = name + (" - " + row["program"] if row["program"] else "")
+        lines = [f"{'Added' if created else 'Updated'} **{title}**", ""]
+        lines += [f"`{k}`: {v}" for k, v in list(filled.items())[:14]]
+        if missing:
+            lines += ["", "Still unknown: " + ", ".join(f"`{m}`" for m in missing)]
+        await send_long(message.channel, "\n".join(lines))
+        return
+
+    if command == "/unis":
+        from src.academic_agent import tracker
+
+        rows = tracker.load()
+        if not rows:
+            await message.channel.send("Nothing saved yet. Add one with `/uni <details>`.")
+            return
+        lines = [tracker.summary(), ""]
+        for row in rows:
+            lines.append(
+                f"- **{row['university']}** {row['program']} "
+                f"| {row['deadline'] or 'no deadline'} | {row['status']}"
+            )
+        lines.append("")
+        lines.append(f"CSV: `{tracker.CSV_PATH}`")
+        await send_long(message.channel, "\n".join(lines))
+        return
+
+    if command == "/unimatch":
+        from src.academic_agent import tracker
+
+        if not tracker.load():
+            await message.channel.send("Nothing saved yet. Add one with `/uni <details>`.")
+            return
+        await message.channel.send("Scoring fit against your profile...")
+        try:
+            results = await asyncio.to_thread(tracker.match_all)
+        except Exception as exc:
+            await message.channel.send(f"Could not score: {exc}")
+            return
+
+        lines = ["**Fit against your profile** - not admission odds", ""]
+        for r in results:
+            lines.append(
+                f"**{r['score']}/100 - {r['verdict']}** {r['university']} {r['program']}"
+            )
+            lines += [f"  + {x}" for x in r["reasons"]]
+            lines += [f"  ! {x}" for x in r["blockers"]]
+            if r["next_step"]:
+                lines.append(f"  -> {r['next_step']}")
+            lines.append("")
+        await send_long(message.channel, "\n".join(lines))
+        return
+
+    if command in {"/prof", "/professor"}:
+        parts = text.split(maxsplit=1)
+        details = parts[1].strip() if len(parts) > 1 else ""
+        if not details:
+            await message.channel.send(
+                "Give me the professor's email and whatever you know.\n"
+                "`/prof jane.doe@mit.edu - retrieval and long-context evaluation, Fall 2027 PhD`"
+            )
+            return
+        from src.academic_agent import outreach
+
+        await message.channel.send("Drafting...")
+        try:
+            result = await asyncio.to_thread(outreach.draft, details)
+        except Exception as exc:
+            await message.channel.send(f"Could not draft it: {exc}")
+            return
+        header = f"**To:** {result['to']}\n\n" if result["to"] else ""
+        await send_long(message.channel, header + result["body"])
         return
 
     if command == "/interview":

@@ -1,0 +1,14 @@
+{
+  "name": "Ankit Rai",
+  "country": "Nepal",
+  "degree": "BSc Computer Science and Information Technology (CSIT)",
+  "institution": "Orchid International College, Tribhuvan University",
+  "graduated": "2024",
+  "aggregate": "75.57%",
+  "gpa_note": "75.57% TU aggregate; needs WES/ECE evaluation for a 4.0-scale equivalent",
+  "gre": "not taken",
+  "english_test": "not taken",
+  "experience": "Associate AI Engineer - RAG pipelines, hybrid retrieval, agents, LLM routing, MLflow tracing",
+  "interests": "retrieval-augmented generation, LLM agents, evaluation, efficient inference",
+  "funding_required": true
+}

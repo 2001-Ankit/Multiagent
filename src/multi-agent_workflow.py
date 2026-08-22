@@ -2432,9 +2432,11 @@ def run_briefing(name: str, channel: str | None = None) -> bool:
         return False
 
     channel = channel or DEFAULT_DELIVERY_CHANNEL
-    delivered = deliver_message(
-        BRIEFINGS[name]["title"], text, channel, BRIEFINGS[name].get("webhook_env", "")
-    )
+    # Every briefing can have its own channel by convention: set
+    # DISCORD_AI_WEBHOOK_URL, DISCORD_NEWS_WEBHOOK_URL and so on. Unset vars fall
+    # back to the main channel, so this costs nothing until it is used.
+    webhook_env = BRIEFINGS[name].get("webhook_env") or f"DISCORD_{name.upper()}_WEBHOOK_URL"
+    delivered = deliver_message(BRIEFINGS[name]["title"], text, channel, webhook_env)
     safe_print(f"\n[BRIEFING] Delivered via {channel}: {delivered}")
     return delivered
 

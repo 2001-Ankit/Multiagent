@@ -24,7 +24,10 @@ def keyed(monkeypatch):
 
 class TestProviderSelection:
     def test_no_key_means_no_provider(self, monkeypatch):
+        # Both must be cleared: importing discord_bot anywhere in the suite calls
+        # load_dotenv(override=True), which leaks the real .env into the process.
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
         assert media_router.image_provider() == "none"
 
     def test_key_selects_gemini(self, keyed):

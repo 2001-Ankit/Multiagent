@@ -126,7 +126,9 @@ HELP_TEXT = (
     "specialist.\n\n"
     "I remember our recent conversation, so follow-ups like "
     "'tell me more about the second one' work.\n\n"
-    "**Commands:** /daily /news /jobs /watch /model /help\n"
+    "**Commands:** /daily /news /ai /jobs /watch /model /help\n"
+    "**Channels:** name a channel #interview, #blog, #content or #news and it "
+    "handles only that. Any other channel accepts everything.\n"
     "**Interview prep:** /interview [area] - one concept question + one coding "
     "problem, rotating a syllabus. `/interview progress` shows coverage.\n"
     "**Memory:** /remember <fact> | /memory | /forget\n"
@@ -293,6 +295,81 @@ async def handle_scene_upload(message: discord.Message, text: str) -> None:
         )
 
 
+# --- Channel routing --------------------------------------------------------
+# One channel for briefings, blog drafts, carousels and interview prep gets
+# unreadable fast. A channel whose name matches a mode below only handles that
+# mode: its commands work, the rest are redirected, and bare text is treated as
+# a request of that kind instead of going to the general planner.
+#
+# Channels not listed keep the old behaviour and accept everything, so a single
+# general channel still works.
+MODE_COMMANDS = {
+    "interview": {"/interview"},
+    "blog": {"/blog", "/drafts", "/publish", "/discard", "/cover", "/media"},
+    "content": {"/content", "/carousel", "/scene", "/assemble"},
+    "news": {"/news", "/ai", "/daily", "/watch"},
+    "jobs": {"/jobs"},
+}
+
+# Commands that make sense anywhere.
+GLOBAL_COMMANDS = {"/help", "/model", "/remember", "/memory", "/forget"}
+
+# Bare text in these channels becomes this command instead of a general query.
+MODE_DEFAULT_COMMAND = {
+    "interview": "/interview",
+    "blog": "/blog",
+    "content": "/content",
+}
+
+
+def _mode_overrides() -> dict[str, str]:
+    """DISCORD_CHANNEL_MODES="ai-news:news,writing:blog" maps extra channel names."""
+    raw = os.getenv("DISCORD_CHANNEL_MODES", "")
+    mapping: dict[str, str] = {}
+    for pair in raw.split(","):
+        if ":" in pair:
+            name, mode = pair.split(":", 1)
+            if mode.strip() in MODE_COMMANDS:
+                mapping[name.strip().lower()] = mode.strip()
+    return mapping
+
+
+def channel_mode(channel) -> str:
+    """The mode for a channel, or "" when it should accept everything."""
+    name = (getattr(channel, "name", "") or "").lower()
+    if not name:
+        return ""  # a DM has no name: never restrict it
+    override = _mode_overrides().get(name)
+    if override:
+        return override
+    for mode in MODE_COMMANDS:
+        # Substring so "ai-news", "news-feed" and "news" all resolve to news.
+        if mode in name:
+            return mode
+    return ""
+
+
+def route_message(mode: str, text: str) -> tuple[str, str]:
+    """Return (text_to_run, refusal). A refusal means do not run anything."""
+    if not mode:
+        return text, ""
+
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        default = MODE_DEFAULT_COMMAND.get(mode)
+        # Without a default the channel still answers questions normally; the
+        # point is to keep OTHER commands out, not to block conversation.
+        return (f"{default} {stripped}" if default and stripped else stripped), ""
+
+    command = stripped.split()[0].lower()
+    if command in GLOBAL_COMMANDS or command in MODE_COMMANDS[mode]:
+        return stripped, ""
+
+    home = next((m for m, cmds in MODE_COMMANDS.items() if command in cmds), "")
+    where = f"the #{home} channel" if home else "a general channel"
+    return "", f"`{command}` belongs in {where}. This channel handles **{mode}**."
+
+
 @client.event
 async def on_message(message: discord.Message):
     if message.author == client.user:
@@ -301,6 +378,13 @@ async def on_message(message: discord.Message):
         return
 
     text = (message.content or "").strip()
+
+    mode = channel_mode(message.channel)
+    if mode and text:
+        text, refusal = route_message(mode, text)
+        if refusal:
+            await message.channel.send(refusal)
+            return
 
     # Saving an asset must be checked before the vision branch below, or an
     # attachment sent with a command gets swallowed by the image analyser.

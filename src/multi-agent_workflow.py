@@ -61,6 +61,8 @@ from src.job_finder_agent.tools import (  # noqa: E402
     get_my_resume,
     search_jobs_indeed,
     search_jobs_web,
+    search_jobs_nepal,
+    search_jobs_remote_global,
 )
 from src.learning_agent.tools import (  # noqa: E402
     find_learning_resources,
@@ -169,6 +171,8 @@ ACADEMIC_TOOLS = [
 JOB_FINDER_TOOLS = [
     get_my_resume,
     search_jobs_web,
+    search_jobs_nepal,
+    search_jobs_remote_global,
     search_jobs_indeed,
     extract_url_content,
     search_information,
@@ -401,12 +405,29 @@ Workflow:
 1. Call get_my_resume first to ground everything in the candidate's real skills,
    experience, seniority, and domain. If no resume is available, proceed from the
    user's stated background but say the resume was missing.
-2. Use search_jobs_web to source roles across many boards. Also call
-   search_jobs_indeed for extra reach; if it reports it is not configured, just
-   rely on web results.
+2. Source from BOTH markets - they are different searches, not one:
+   - search_jobs_nepal for roles inside Nepal (merojob, jobsnepal, kumarijob and
+     other local boards). Global boards barely index these.
+   - search_jobs_remote_global for roles open to candidates anywhere.
+   Do both unless the user asks for only one. A briefing that is only remote
+   ignores the market the candidate can actually start in tomorrow; one that is
+   only local ignores the pay difference.
+   search_jobs_web is the broad fallback; search_jobs_indeed adds reach when
+   configured, and can be skipped when it reports it is not.
 3. For promising roles, use extract_url_content to open the listing and read the
    real requirements, location, and application deadline.
 
+
+How a Nepal-based candidate can legally hold a "global" role - say which applies:
+- Independent contractor: the common route. The company pays an invoice; the
+  candidate handles their own Nepali tax and registration. Look for "contractor",
+  "B2B" or "invoice" in the posting.
+- Employer of Record (Deel, Remote.com, Oyster): the company hires through a
+  local entity. Usually stated as "we hire globally through an EOR".
+- Direct employment: normally requires a local entity in Nepal. Rare.
+A role that says "W2 only", "must be on our payroll" or names one country for
+employment is usually closed regardless of how remote it sounds. Say so plainly
+rather than listing it as a match.
 Eligibility (critical): the candidate is in {CANDIDATE_COUNTRY}. Flag anything that
 blocks them, for example:
 - "Remote (US only)" / region-locked remote / "must reside in <country>".
@@ -2394,10 +2415,19 @@ BRIEFINGS = {
         "title": "Job Matches",
         "sections": [
             (
-                "Job matches",
-                "Find up to 5 fresh roles I am eligible for from Nepal that match my "
-                "resume. For each: company, role, why it fits, apply link, deadline, "
-                "and a short tailored outreach message.",
+                "In Nepal",
+                "Use search_jobs_nepal for up to 4 current openings in Nepal that "
+                "match my resume. For each: company, role, location, why it fits, "
+                "and the apply link. Say plainly if the local market has nothing "
+                "close this week rather than padding with loose matches.",
+            ),
+            (
+                "Remote, open worldwide",
+                "Use search_jobs_remote_global for up to 4 roles genuinely open to "
+                "someone in Nepal. For each: company, role, why it fits, the apply "
+                "link, and the eligibility flag. Where a listing looks region-locked "
+                "say so and do not count it as a match. Name the likely engagement "
+                "route (contractor, EOR, or unclear) when the posting indicates it.",
             ),
         ],
     },

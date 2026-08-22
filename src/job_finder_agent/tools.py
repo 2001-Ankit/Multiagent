@@ -23,6 +23,63 @@ JOB_BOARDS = (
     "lever.co",
 )
 
+# Nepali boards. The global boards barely index the local market, so searching
+# them for "Nepal" returns almost nothing - these must be queried directly.
+NEPAL_BOARDS = (
+    "merojob.com",
+    "jobsnepal.com",
+    "kumarijob.com",
+    "ramrojob.com",
+    "jobaxle.com",
+    "froxjob.com",
+)
+
+# Boards listing roles open to candidates anywhere, rather than "remote" that
+# quietly means one country.
+GLOBAL_REMOTE_BOARDS = (
+    "remoteok.com",
+    "weworkremotely.com",
+    "remotive.com",
+    "himalayas.app",
+    "justremote.co",
+    "wellfound.com",
+)
+
+# Phrases suggesting a "remote" role is probably NOT open from Nepal. Hints, not
+# filters: wording is inconsistent and dropping a listing outright would hide
+# real opportunities. Flagging lets the candidate check before spending an hour
+# on an application they could never accept.
+RESTRICTION_HINTS = (
+    "us only", "u.s. only", "usa only", "united states only",
+    "must be located in", "must reside in", "must be based in",
+    "authorized to work in the us", "work authorization in the us",
+    "eligible to work in the us", "us-based", "uk only", "eu only",
+    "canada only", "within the united states", "no visa sponsorship",
+)
+
+# Phrases suggesting it genuinely is open worldwide.
+OPEN_HINTS = (
+    "worldwide", "work from anywhere", "anywhere in the world",
+    "global remote", "any timezone", "fully remote",
+    "contractor", "independent contractor",
+)
+
+
+def eligibility_note(text: str) -> str:
+    """Whether a listing looks open from Nepal. Advisory, never authoritative.
+
+    The posting is the authority. But spotting "US only" before writing a cover
+    letter saves the hour otherwise wasted on it.
+    """
+    lowered = (text or "").lower()
+    blockers = [hint for hint in RESTRICTION_HINTS if hint in lowered]
+    if blockers:
+        return f"CHECK - may exclude Nepal (mentions: {blockers[0]})"
+    signals = [hint for hint in OPEN_HINTS if hint in lowered]
+    if signals:
+        return f"Looks open ({signals[0]})"
+    return "Eligibility unstated - verify in the posting"
+
 
 @tool
 def get_my_resume() -> str:
@@ -80,6 +137,72 @@ def search_jobs_web(role: str, location: str = "", keywords: str = "") -> str:
 
     return _format_listings("Web job search", role, listings[:10])
 
+
+def _collect(queries: list) -> list:
+    """Run several searches and de-duplicate by URL."""
+    seen = set()
+    listings = []
+    for query in queries:
+        try:
+            results = DDGS().text(query=query, max_results=6)
+        except DDGSException:
+            continue
+        for result in results:
+            url = str(result.get("href", "")).strip()
+            key = url or str(result.get("title", ""))
+            if key and key not in seen:
+                seen.add(key)
+                listings.append(result)
+    return listings
+
+
+@tool
+def search_jobs_nepal(role: str, keywords: str = "") -> str:
+    """Search Nepali job boards for roles based in Nepal.
+
+    Global boards barely index the local market, so this queries merojob,
+    jobsnepal, kumarijob, ramrojob, jobaxle and froxjob directly. Use it for
+    onsite or hybrid work in Kathmandu and the rest of Nepal.
+    """
+    role = role.strip()
+    keywords = keywords.strip()
+    board_filter = " OR ".join(f"site:{board}" for board in NEPAL_BOARDS)
+    listings = _collect([
+        f"{role} {keywords} jobs Nepal ({board_filter})".strip(),
+        f"{role} {keywords} vacancy Kathmandu Nepal apply".strip(),
+    ])
+    if not listings:
+        return (
+            f"Nepal jobs\nRole: {role or '(unspecified)'}\n\n"
+            "No listings found on Nepali boards. Try a broader title - the local "
+            "market usually advertises 'Software Engineer' rather than 'AI Engineer'."
+        )
+    return _format_listings("Nepal jobs", role, listings)
+
+
+@tool
+def search_jobs_remote_global(role: str, keywords: str = "") -> str:
+    """Search boards listing roles open to candidates anywhere.
+
+    Targets remote-first boards, and flags whether each listing looks open from
+    Nepal. Many "remote" roles are restricted to one country for employment-law
+    reasons; the flag prompts a check, it is not a verdict.
+    """
+    role = role.strip()
+    keywords = keywords.strip()
+    board_filter = " OR ".join(f"site:{board}" for board in GLOBAL_REMOTE_BOARDS)
+    listings = _collect([
+        f"{role} {keywords} remote worldwide ({board_filter})".strip(),
+        f"{role} {keywords} remote contractor hire anywhere".strip(),
+    ])
+    if not listings:
+        return (
+            f"Remote roles (open worldwide)\nRole: {role or '(unspecified)'}\n\n"
+            "No listings found. Try a broader role title."
+        )
+    return _format_listings(
+        "Remote roles (open worldwide)", role, listings, flag_eligibility=True
+    )
 
 @tool
 def search_jobs_indeed(query: str, location: str = "") -> str:
@@ -182,7 +305,10 @@ def _extract_mcp_text(result: Any) -> str:
 # Formatting helpers
 # --------------------------------------------------------------------------- #
 def _format_listings(
-    result_type: str, role: str, listings: list[dict[str, Any]]
+    result_type: str,
+    role: str,
+    listings: list[dict[str, Any]],
+    flag_eligibility: bool = False,
 ) -> str:
     context = f"{result_type}\nRole: {role or '(unspecified)'}\n"
     for idx, result in enumerate(listings, start=1):
@@ -194,6 +320,9 @@ def _format_listings(
                 continue
             label = "Url" if field == "href" else field.title()
             lines.append(f"{label}: {_truncate(str(value))}")
+        if flag_eligibility:
+            blob = f"{result.get('title', '')} {result.get('body', '')}"
+            lines.append(f"Eligibility: {eligibility_note(blob)}")
         context += "\n".join(lines)
     return context
 

@@ -33,6 +33,7 @@ from src.delivery_agent.formatting_tool import format_delivery_message  # noqa: 
 from src.delivery_agent.telegram_tool import send_telegram_message  # noqa: E402
 from src.delivery_agent.discord_tool import send_discord_message  # noqa: E402
 from src.delivery_agent.whatsapp_tool import send_whatsapp_message  # noqa: E402
+from src.finance_agent.nepse import get_nepse_history, log_nepse_reading  # noqa: E402
 from src.finance_agent.tools import (  # noqa: E402
     get_analyst_view,
     get_commodity_price,
@@ -148,6 +149,8 @@ FINANCE_TOOLS = [
     search_finance_news,
     search_macro_finance_context,
     search_nepal_finance,
+    log_nepse_reading,
+    get_nepse_history,
 ]
 
 NEWS_TOOLS = [
@@ -2428,6 +2431,36 @@ BRIEFINGS = {
                 "link, and the eligibility flag. Where a listing looks region-locked "
                 "say so and do not count it as a match. Name the likely engagement "
                 "route (contractor, EOR, or unclear) when the posting indicates it.",
+            ),
+        ],
+    },
+    "finance": {
+        "title": "Markets - Global",
+        "sections": [
+            (
+                "Global markets",
+                "Give me a global markets read: major indices, the dollar, gold and "
+                "oil, and any central bank or macro event that moved them. For each "
+                "move say what caused it, not just the number. Close with one or two "
+                "things to watch in the next 24 hours. No NEPSE here - that has its "
+                "own briefing.",
+            ),
+        ],
+    },
+    "nepse": {
+        "title": "NEPSE",
+        "sections": [
+            (
+                "NEPSE today",
+                "First call get_nepse_history to see what has already been recorded. "
+                "Then use search_nepal_finance to find today's NEPSE index level, "
+                "points change and turnover. If you find a real index level, call "
+                "log_nepse_reading with exactly the numbers you read - never "
+                "estimate one and never reuse a previous day's. If today's numbers "
+                "are not published yet, say so and log nothing. Finish by describing "
+                "what the recorded series shows: direction, the range, and whether "
+                "today continues or breaks it. Describe the data - do not tell me to "
+                "buy or sell.",
             ),
         ],
     },

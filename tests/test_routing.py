@@ -48,11 +48,16 @@ class TestRouting:
         text, refusal = bot.route_message("interview", "/interview RAG")
         assert text == "/interview RAG" and not refusal
 
-    def test_foreign_command_is_refused_and_told_where_to_go(self):
+    def test_foreign_commands_are_allowed_by_default(self, monkeypatch):
+        """The agents are shared; a channel's mode shapes meaning, not access."""
+        monkeypatch.delenv("DISCORD_STRICT_CHANNELS", raising=False)
         text, refusal = bot.route_message("interview", "/blog something")
-        assert text == ""
-        assert "#blog" in refusal
+        assert text == "/blog something" and not refusal
 
+    def test_strict_mode_refuses_and_points_to_the_right_channel(self, monkeypatch):
+        monkeypatch.setenv("DISCORD_STRICT_CHANNELS", "1")
+        text, refusal = bot.route_message("interview", "/blog something")
+        assert text == "" and "#blog" in refusal
     def test_global_commands_work_anywhere(self):
         for command in ("/help", "/model", "/remember a fact"):
             _, refusal = bot.route_message("interview", command)

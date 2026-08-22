@@ -50,6 +50,8 @@ BRIEFING_COMMANDS = {
     "/ai": "ai",
     "/dev": "dev",
     "/jobs": "jobs",
+    "/finance": "finance",
+    "/nepse": "nepse",
     "/watch": "watch",
 }
 
@@ -318,6 +320,8 @@ MODE_COMMANDS = {
     "dev": {"/dev", "/repos", "/papers"},
     "academic": {"/uni", "/university", "/unis", "/unimatch", "/prof", "/professor"},
     "jobs": {"/jobs"},
+    "finance": {"/finance", "/markets"},
+    "nepse": {"/nepse"},
 }
 
 # Commands that make sense anywhere.
@@ -343,6 +347,8 @@ MODE_ALIASES = {
     "blog": ("writing", "posts", "articles"),
     "news": ("briefing", "daily"),
     "jobs": ("job", "careers", "hiring"),
+    "finance": ("markets", "money", "investing"),
+    "nepse": ("stocks", "share-market", "sharemarket"),
 }
 
 
@@ -380,6 +386,17 @@ def channel_mode(channel) -> str:
     return ""
 
 
+def strict_channels() -> bool:
+    """Whether a channel refuses commands from other modes.
+
+    Off by default. The agents are shared - any of them can be useful anywhere -
+    so a channel's mode shapes what bare text MEANS there and where scheduled
+    briefings land, rather than locking tools away. Set DISCORD_STRICT_CHANNELS=1
+    to have off-topic commands refused instead.
+    """
+    return os.getenv("DISCORD_STRICT_CHANNELS", "0").strip().lower() in {"1", "true", "yes"}
+
+
 def route_message(mode: str, text: str) -> tuple[str, str]:
     """Return (text_to_run, refusal). A refusal means do not run anything."""
     if not mode:
@@ -389,11 +406,14 @@ def route_message(mode: str, text: str) -> tuple[str, str]:
     if not stripped.startswith("/"):
         default = MODE_DEFAULT_COMMAND.get(mode)
         # Without a default the channel still answers questions normally; the
-        # point is to keep OTHER commands out, not to block conversation.
+        # mode decides what a bare question MEANS here, not whether it is allowed.
         return (f"{default} {stripped}" if default and stripped else stripped), ""
 
     command = stripped.split()[0].lower()
     if command in GLOBAL_COMMANDS or command in MODE_COMMANDS[mode]:
+        return stripped, ""
+
+    if not strict_channels():
         return stripped, ""
 
     home = next((m for m, cmds in MODE_COMMANDS.items() if command in cmds), "")

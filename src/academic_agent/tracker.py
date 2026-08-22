@@ -16,6 +16,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -311,3 +312,85 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# Discord has no tables, so alignment has to be done by hand inside a code block.
+# The full 28 columns never fit in a phone-width message, so a table shows the
+# fields that decide a shortlist and points at the CSV for the rest.
+TABLE_DEFAULT = ["university", "program", "deadline", "funding_type", "status"]
+TABLE_MAX_WIDTH = 26
+
+
+def as_table(rows: list[dict], columns: list[str] | None = None) -> str:
+    """Render rows as an aligned monospace table."""
+    columns = [c for c in (columns or TABLE_DEFAULT) if c in COLUMNS] or TABLE_DEFAULT
+    if not rows:
+        return "No universities saved yet."
+
+    def cell(row: dict, column: str) -> str:
+        value = (row.get(column) or "-").strip() or "-"
+        return value[: TABLE_MAX_WIDTH - 1] + "\u2026" if len(value) > TABLE_MAX_WIDTH else value
+
+    widths = {
+        column: max(len(column), *(len(cell(row, column)) for row in rows))
+        for column in columns
+    }
+    header = "  ".join(column.upper().ljust(widths[column]) for column in columns)
+    rule = "  ".join("-" * widths[column] for column in columns)
+    body = [
+        "  ".join(cell(row, column).ljust(widths[column]) for column in columns)
+        for row in rows
+    ]
+    return "\n".join([header, rule, *body])
+
+
+@tool
+def list_universities(columns: str = "", status: str = "") -> str:
+    """The saved university shortlist as a table.
+
+    Use for any request to see, list or review the tracked universities.
+    `columns` is a comma-separated subset (default: university, program,
+    deadline, funding_type, status); pass "all" for every field. `status`
+    filters, e.g. "applied".
+    """
+    rows = load()
+    if status.strip():
+        wanted = status.strip().lower()
+        rows = [r for r in rows if (r.get("status") or "").lower() == wanted]
+    if not rows:
+        return "No universities match. Add one by pasting the details into chat."
+
+    if columns.strip().lower() == "all":
+        chosen = COLUMNS
+    elif columns.strip():
+        chosen = [c.strip() for c in columns.split(",") if c.strip() in COLUMNS]
+    else:
+        chosen = TABLE_DEFAULT
+
+    table = as_table(rows, chosen)
+    return f"{len(rows)} programme(s)\n```\n{table}\n```\nCSV: {CSV_PATH}"
+
+
+@tool
+def get_university_details(name: str) -> str:
+    """Every recorded field for one university, including what is still blank.
+
+    Use when asked about a specific university rather than the whole list. Blank
+    fields are shown as unknown so they read as research still to do, not as
+    absent requirements.
+    """
+    wanted = name.strip().lower()
+    matches = [r for r in load() if wanted in (r.get("university") or "").lower()]
+    if not matches:
+        return f"Nothing saved for {name!r}. Paste the details into chat to add it."
+
+    out = []
+    for row in matches:
+        known = [f"{c}: {row[c]}" for c in COLUMNS if row.get(c)]
+        unknown = [c for c in COLUMNS if not row.get(c)]
+        out.append(
+            f"**{row['university']} - {row['program']}**\n"
+            + "\n".join(known)
+            + (f"\n\nStill unknown: {', '.join(unknown)}" if unknown else "")
+        )
+    return "\n\n".join(out)

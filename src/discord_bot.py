@@ -726,10 +726,13 @@ async def on_message(message: discord.Message):
     if command == "/unis":
         from src.academic_agent import tracker
 
-        rows = tracker.load()
-        if not rows:
-            await message.channel.send("Nothing saved yet. Add one with `/uni <details>`.")
-            return
+        parts = text.split(maxsplit=1)
+        columns = parts[1].strip() if len(parts) > 1 else ""
+        await send_long(
+            message.channel,
+            tracker.summary() + "\n\n" + tracker.list_universities.func(columns=columns),
+        )
+        return
         lines = [tracker.summary(), ""]
         for row in rows:
             lines.append(

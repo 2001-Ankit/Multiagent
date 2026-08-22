@@ -122,3 +122,60 @@ class TestOutreach:
         )
         result = outreach.draft("jane@mit.edu works on RAG")
         assert result["to"] == "jane@mit.edu" and "Subject" in result["body"]
+
+
+class TestTable:
+    """Discord has no tables, so alignment is done by hand in a code block."""
+
+    def test_columns_align(self):
+        rows = [
+            {**tracker._blank_row(), "university": "MIT", "program": "MS CS"},
+            {**tracker._blank_row(), "university": "A Much Longer Name", "program": "PhD"},
+        ]
+        header, rule, *body = tracker.as_table(rows, ["university", "program"]).splitlines()
+        assert len(header) == len(rule)
+        assert all(len(line) == len(rule) for line in body)
+
+    def test_long_values_are_truncated_not_wrapped(self):
+        rows = [{**tracker._blank_row(), "university": "x" * 80, "program": "p"}]
+        line = tracker.as_table(rows, ["university"]).splitlines()[-1]
+        assert len(line) <= tracker.TABLE_MAX_WIDTH
+
+    def test_blank_cells_show_a_dash(self):
+        rows = [{**tracker._blank_row(), "university": "MIT"}]
+        assert "-" in tracker.as_table(rows, ["university", "deadline"]).splitlines()[-1]
+
+    def test_default_columns_are_the_deciding_ones(self):
+        for column in ("deadline", "funding_type", "status"):
+            assert column in tracker.TABLE_DEFAULT
+
+    def test_empty_list_says_so(self):
+        assert "No universities" in tracker.as_table([])
+
+
+class TestListTool:
+    def test_tool_wraps_the_table_in_a_code_block(self):
+        tracker.upsert({"university": "MIT", "program": "MS CS"})
+        assert tracker.list_universities.func().count("```") == 2
+
+    def test_all_selects_every_column(self):
+        tracker.upsert({"university": "MIT", "program": "MS CS"})
+        assert "TRANSCRIPT_EVAL" in tracker.list_universities.func(columns="all")
+
+    def test_status_filter_applies(self):
+        tracker.upsert({"university": "MIT", "program": "MS CS", "status": "applied"})
+        tracker.upsert({"university": "CMU", "program": "MS CS", "status": "researching"})
+        out = tracker.list_universities.func(status="applied")
+        assert "MIT" in out and "CMU" not in out
+
+    def test_unknown_columns_fall_back_to_defaults(self):
+        tracker.upsert({"university": "MIT", "program": "MS CS"})
+        assert "UNIVERSITY" in tracker.list_universities.func(columns="nonsense")
+
+    def test_details_lists_what_is_still_unknown(self):
+        tracker.upsert({"university": "MIT", "program": "MS CS"})
+        out = tracker.get_university_details.func("mit")
+        assert "Still unknown" in out and "deadline" in out
+
+    def test_details_for_a_missing_university_is_clear(self):
+        assert "Nothing saved" in tracker.get_university_details.func("Hogwarts")

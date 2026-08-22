@@ -33,6 +33,10 @@ from src.delivery_agent.formatting_tool import format_delivery_message  # noqa: 
 from src.delivery_agent.telegram_tool import send_telegram_message  # noqa: E402
 from src.delivery_agent.discord_tool import send_discord_message  # noqa: E402
 from src.delivery_agent.whatsapp_tool import send_whatsapp_message  # noqa: E402
+from src.academic_agent.tracker import (  # noqa: E402
+    get_university_details,
+    list_universities,
+)
 from src.finance_agent.nepse import get_nepse_history, log_nepse_reading  # noqa: E402
 from src.finance_agent.tools import (  # noqa: E402
     get_analyst_view,
@@ -163,6 +167,8 @@ NEWS_TOOLS = [
 ]
 
 ACADEMIC_TOOLS = [
+    list_universities,
+    get_university_details,
     find_us_professors,
     get_professor_recent_work,
     find_us_programs,

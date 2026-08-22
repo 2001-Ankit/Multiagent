@@ -73,6 +73,8 @@ from src.market_opportunity_agent.tools import (  # noqa: E402
     research_demand_and_funding,
     research_market_trends,
 )
+from src.news_agent.github_trends import fetch_trending_repos  # noqa: E402
+from src.news_agent.papers import fetch_papers, foundational_papers  # noqa: E402
 from src.news_agent.tools import fetch_ai_news, fetch_live_updates, fetch_news_section  # noqa: E402
 from src.content_agent.tools import (  # noqa: E402
     find_trending_hooks,
@@ -146,7 +148,14 @@ FINANCE_TOOLS = [
     search_nepal_finance,
 ]
 
-NEWS_TOOLS = [fetch_news_section, fetch_ai_news, fetch_live_updates]
+NEWS_TOOLS = [
+    fetch_news_section,
+    fetch_ai_news,
+    fetch_live_updates,
+    fetch_trending_repos,
+    fetch_papers,
+    foundational_papers,
+]
 
 ACADEMIC_TOOLS = [
     find_us_professors,
@@ -2317,6 +2326,26 @@ BRIEFINGS = {
                 "name the comparison. Say plainly when a claim is vendor-reported "
                 "rather than independently verified. Skip funding and opinion "
                 "pieces unless they change what a practitioner should use.",
+            ),
+        ],
+    },
+    "dev": {
+        "title": "Dev Radar",
+        "sections": [
+            (
+                "GitHub",
+                "Use fetch_trending_repos for repositories gaining traction. For "
+                "each: what it does in one line, its star count, and why it is "
+                "worth a look or not. Skip anything that is a tutorial list, an "
+                "awesome-list, or a wrapper with no substance.",
+            ),
+            (
+                "Papers",
+                "Use fetch_papers for recent work, and foundational_papers with "
+                "count 2 for classics worth revisiting. For each recent paper: "
+                "the claim in one sentence, the result that supports it, and who "
+                "should care. Say plainly when a result is preliminary or on a "
+                "single benchmark. Always include the arXiv link.",
             ),
         ],
     },

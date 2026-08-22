@@ -44,7 +44,14 @@ _spec.loader.exec_module(mw)
 TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 ALLOWED_USER_ID = os.getenv("DISCORD_ALLOWED_USER_ID", "").strip()
 
-BRIEFING_COMMANDS = {"/daily": "daily", "/news": "news", "/jobs": "jobs", "/watch": "watch"}
+BRIEFING_COMMANDS = {
+    "/daily": "daily",
+    "/news": "news",
+    "/ai": "ai",
+    "/dev": "dev",
+    "/jobs": "jobs",
+    "/watch": "watch",
+}
 
 # --- Built-in scheduler -----------------------------------------------------
 # One deployment gives you chat AND automatic briefings, so no external cron is
@@ -126,7 +133,7 @@ HELP_TEXT = (
     "specialist.\n\n"
     "I remember our recent conversation, so follow-ups like "
     "'tell me more about the second one' work.\n\n"
-    "**Commands:** /daily /news /ai /jobs /watch /model /help\n"
+    "**Commands:** /daily /news /ai /dev /jobs /watch /model /help\n"
     "**Channels:** name a channel #interview, #blog, #content or #news and it "
     "handles only that. Any other channel accepts everything.\n"
     "**Interview prep:** /interview [area] - one concept question + one coding "
@@ -308,6 +315,7 @@ MODE_COMMANDS = {
     "blog": {"/blog", "/drafts", "/publish", "/discard", "/cover", "/media"},
     "content": {"/content", "/carousel", "/scene", "/assemble"},
     "news": {"/news", "/ai", "/daily", "/watch"},
+    "dev": {"/dev", "/repos", "/papers"},
     "jobs": {"/jobs"},
 }
 

@@ -134,7 +134,7 @@ HELP_TEXT = (
     "I remember our recent conversation, so follow-ups like "
     "'tell me more about the second one' work.\n\n"
     "**Commands:** /daily /news /ai /dev /jobs /watch /model /help\n"
-    "**Channels:** name a channel #interview, #blog, #content or #news and it "
+    "**Channels:** name a channel #interview, #blog, #content, #news, #dev or #academic and it "
     "handles only that. Any other channel accepts everything.\n"
     "**Interview prep:** /interview [area] - one concept question + one coding "
     "problem, rotating a syllabus. `/interview progress` shows coverage.\n"
@@ -331,6 +331,28 @@ MODE_DEFAULT_COMMAND = {
 }
 
 
+# Natural channel names rarely contain the mode word: nobody calls a channel
+# "#academic" when "#university" or "#abroad" is what they mean. Aliases are
+# matched longest-first so a more specific name wins when two could apply.
+MODE_ALIASES = {
+    "academic": ("university", "universities", "abroad", "grad-school", "gradschool",
+                 "masters", "phd", "scholarship", "study"),
+    "dev": ("github", "repos", "papers", "radar", "trends"),
+    "content": ("social", "instagram", "carousel", "reels"),
+    "interview": ("prep", "practice"),
+    "blog": ("writing", "posts", "articles"),
+    "news": ("briefing", "daily"),
+    "jobs": ("job", "careers", "hiring"),
+}
+
+
+def _alias_pairs() -> list[tuple[str, str]]:
+    pairs = [(mode, mode) for mode in MODE_COMMANDS]
+    for mode, aliases in MODE_ALIASES.items():
+        pairs += [(alias, mode) for alias in aliases]
+    return sorted(pairs, key=lambda pair: len(pair[0]), reverse=True)
+
+
 def _mode_overrides() -> dict[str, str]:
     """DISCORD_CHANNEL_MODES="ai-news:news,writing:blog" maps extra channel names."""
     raw = os.getenv("DISCORD_CHANNEL_MODES", "")
@@ -351,9 +373,9 @@ def channel_mode(channel) -> str:
     override = _mode_overrides().get(name)
     if override:
         return override
-    for mode in MODE_COMMANDS:
+    for token, mode in _alias_pairs():
         # Substring so "ai-news", "news-feed" and "news" all resolve to news.
-        if mode in name:
+        if token in name:
             return mode
     return ""
 

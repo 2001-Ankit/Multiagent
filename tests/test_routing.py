@@ -35,8 +35,9 @@ class TestModeDetection:
         assert bot.channel_mode(Channel("writing")) == "blog"
 
     def test_env_ignores_an_unknown_mode(self, monkeypatch):
-        monkeypatch.setenv("DISCORD_CHANNEL_MODES", "writing:nonsense")
-        assert bot.channel_mode(Channel("writing")) == ""
+        # "squiggle" matches no alias, so an ignored override leaves it open.
+        monkeypatch.setenv("DISCORD_CHANNEL_MODES", "squiggle:nonsense")
+        assert bot.channel_mode(Channel("squiggle")) == ""
 
 
 class TestRouting:
@@ -74,3 +75,47 @@ class TestRouting:
         for commands in bot.MODE_COMMANDS.values():
             assert not (seen & commands)
             seen |= commands
+
+
+class TestAliases:
+    """Nobody names a channel "#academic" when "#university" is what they mean."""
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ("university", "academic"),
+            ("universities", "academic"),
+            ("abroad", "academic"),
+            ("grad-school", "academic"),
+            ("scholarships", "academic"),
+            ("github", "dev"),
+            ("papers", "dev"),
+            ("social", "content"),
+            ("prep", "interview"),
+            ("writing", "blog"),
+            ("careers", "jobs"),
+        ],
+    )
+    def test_natural_names_resolve(self, name, expected):
+        assert bot.channel_mode(Channel(name)) == expected
+
+    def test_the_mode_word_itself_still_works(self):
+        for mode in bot.MODE_COMMANDS:
+            assert bot.channel_mode(Channel(mode)) == mode
+
+    def test_unrelated_names_stay_unrestricted(self):
+        for name in ("general", "random", "chat"):
+            assert bot.channel_mode(Channel(name)) == ""
+
+    def test_longer_aliases_win_over_shorter_ones(self):
+        """Ordering must be deterministic when two tokens could both match."""
+        pairs = bot._alias_pairs()
+        lengths = [len(token) for token, _ in pairs]
+        assert lengths == sorted(lengths, reverse=True)
+
+    def test_no_alias_is_claimed_by_two_modes(self):
+        seen = {}
+        for mode, aliases in bot.MODE_ALIASES.items():
+            for alias in aliases:
+                assert alias not in seen, f"{alias} claimed by {seen.get(alias)} and {mode}"
+                seen[alias] = mode

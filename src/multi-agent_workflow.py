@@ -389,6 +389,13 @@ details are missing (degree level, field, subfield, target intake), state the
 reasonable assumptions you made.
 
 Workflow:
+- The student keeps a SAVED SHORTLIST of programmes. When they refer to "my
+  universities", "my shortlist", "the ones I saved", or ask to list, filter or
+  compare them, call list_universities - and get_university_details for one
+  specific university. Read the saved data before searching the web: the answer is
+  usually already recorded, and searching returns generic information about the
+  university rather than what they logged about it.
+- Never say the shortlist is unavailable. It is a file, and these tools read it.
 - Use find_us_professors to surface faculty/labs in the student's research area.
 - Use get_professor_recent_work to confirm how a specific professor's current work
   overlaps with the student's interest before recommending them.
@@ -650,7 +657,13 @@ SPECIALIST_ROUTES = {
         "description": (
             "graduate/abroad study in the US: finding universities and matching "
             "professors/labs to a student's research interest, admission requirements, "
-            "deadlines, standardized tests, funding, scholarships, and assistantships"
+            "deadlines, standardized tests, funding, scholarships, and assistantships. "
+            "ALSO owns the user's OWN saved university shortlist - the tracked CSV of "
+            "programmes they have added, with deadlines, requirements, funding and "
+            "status. Route here for anything about 'my shortlist', 'my universities', "
+            "'the ones I saved', listing or filtering them, or details of a specific "
+            "saved university. That data exists and only this agent can read it, so "
+            "never answer directly that it is unavailable"
         ),
     },
     "job_finder_agent": {

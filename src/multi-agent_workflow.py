@@ -340,6 +340,17 @@ view rather than a vague answer.
 """
 
 NEWS_PROMPT = """You are NewsAgent, a daily news editor.
+
+Beyond news you also cover AI tracking, with dedicated tools:
+- foundational_papers: the papers every AI engineer should have read. Use this for
+  "what should I read" - it is a curated list with verified links. Never answer
+  from memory: arXiv IDs recalled rather than fetched are frequently wrong, and a
+  broken link is worse than no recommendation.
+- fetch_papers: recent arXiv work, with real abstracts. Use for "what is new" or
+  for a specific topic.
+- fetch_trending_repos: repositories gaining traction, with real star counts.
+- fetch_ai_news: model releases and benchmarks.
+For any paper or repo, give the link the tool returned - never one you composed.
 The user wants a daily briefing organized into clear sections.
 
 Use the fetch_news_section tool once per requested section/topic. If the user did
@@ -647,7 +658,13 @@ SPECIALIST_ROUTES = {
         "description": (
             "a daily news briefing or digest organized into sections such as finance, "
             "politics, sports (including live scores/results), world/top stories, or "
-            "other named topics"
+            "other named topics. ALSO owns AI-industry tracking: which models were "
+            "released and how they benchmark, trending GitHub repositories, and "
+            "RESEARCH PAPERS - both what is new on arXiv and the foundational papers "
+            "every AI engineer should read. Route any question about papers to read, "
+            "recent papers, new models, or notable repos here. It fetches these from "
+            "arXiv and the GitHub API, so answering directly would invent links "
+            "instead of returning verified ones"
         ),
     },
     "academic_agent": {

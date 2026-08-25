@@ -98,6 +98,70 @@ def next_run(now: datetime, entries: list[tuple[int, int, str]]) -> tuple[dateti
     return min(candidates, key=lambda pair: pair[0])
 
 
+
+# Where each scheduled briefing should land. The bot is already in the server, so
+# it can post to a channel directly - no webhook per channel to create. Names are
+# tried in order; the first channel the bot can actually write to wins.
+BRIEFING_CHANNELS = {
+    "ai": ("ai-news", "ai", "news-feed", "news"),
+    "dev": ("dev", "github", "radar"),
+    "news": ("news-feed", "news", "ai-news"),
+    "interview": ("interview", "prep"),
+    "jobs": ("jobs", "careers"),
+    "finance": ("finance", "markets"),
+    "nepse": ("nepse", "stocks"),
+    "watch": ("finance", "nepse", "markets"),
+    "daily": ("daily", "general"),
+}
+
+
+def _pick_channel(name: str, channels: list, override: str = ""):
+    """Choose the channel for a briefing from a list. Pure, so it is testable.
+
+    Exact name first, then substring - otherwise "news" gets stolen by "ai-news".
+    """
+    wanted = (override.strip().lower(),) if override.strip() else BRIEFING_CHANNELS.get(name, ())
+    if not wanted:
+        return None
+    for target in wanted:
+        for channel in channels:
+            if getattr(channel, "name", "").lower() == target:
+                return channel
+        for channel in channels:
+            if target in getattr(channel, "name", "").lower():
+                return channel
+    return None
+
+
+def _briefing_channel(name: str):
+    """The channel a briefing belongs in, or None to fall back to the webhook."""
+    try:
+        channels = [c for g in client.guilds for c in g.text_channels]
+    except Exception:
+        return None
+    return _pick_channel(name, channels, os.getenv(f"BRIEFING_CHANNEL_{name.upper()}", ""))
+
+
+async def deliver_briefing(name: str) -> None:
+    """Post a briefing into its own channel, falling back to the webhook."""
+    channel = _briefing_channel(name)
+    if channel is None:
+        # No matching channel: the webhook path still delivers somewhere.
+        await asyncio.to_thread(mw.run_briefing, name)
+        return
+
+    text = await asyncio.to_thread(mw.build_briefing, name)
+    if not text:
+        print(f"[scheduler] briefing '{name}' produced nothing")
+        return
+    try:
+        await send_long(channel, text)
+        print(f"[scheduler] '{name}' delivered to #{channel.name}")
+    except Exception as exc:
+        # A permissions problem should not lose the briefing entirely.
+        print(f"[scheduler] could not post to #{channel.name} ({exc}); using webhook")
+        await asyncio.to_thread(mw.deliver_message, name.title(), text, "discord")
+
 async def scheduler_loop() -> None:
     entries = parse_schedule(BRIEFING_SCHEDULE, DEFAULT_BRIEFING)
     if not entries:
@@ -123,7 +187,7 @@ async def scheduler_loop() -> None:
 
         print(f"[scheduler] running briefing '{name}'")
         try:
-            await asyncio.to_thread(mw.run_briefing, name)
+            await deliver_briefing(name)
         except Exception as exc:
             print(f"[scheduler] briefing '{name}' failed: {exc}")
         # Nudge past the target so the same slot cannot fire twice.
